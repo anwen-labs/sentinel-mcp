@@ -1,0 +1,15 @@
+[package]
+license.workspace = true
+name = "pack-mcp-core"
+version = "0.1.0"
+edition = "2021"
+
+# MCP-specific security rules (rubric v1.1 → lane1/rubric.md). Pure functions of a
+# FactModel produced by a future `mcp-parser`. See src/lib.rs header for the fact
+# contract and README.md for what compiles today vs what needs the source-AST parser.
+
+[dependencies]
+# Sentinel engine reused from the public config-scanner repo, pinned for reproducibility.
+# For offline/local dev you may temporarily override with a path dep to a sibling checkout.
+fact-model = { git = "https://github.com/anwen-labs/sentinel", package = "fact-model", rev = "8d558af97f2d6fb9a05bb970cb1730d85ad891d3" }
+engine = { git = "https://github.com/anwen-labs/sentinel", package = "engine", rev = "8d558af97f2d6fb9a05bb970cb1730d85ad891d3" }

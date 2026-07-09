@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pack-mcp-core",
+    "crates/mcp-parser",
+]
+
+[workspace.package]
+license = "MIT"
+repository = "https://github.com/anwen-labs/sentinel-mcp"
+
+# Sentinel MCP Scorecard — the MCP-server security scanner that feeds the public MCP Scorecard
+# registry. Deliberately SEPARATE from anwen-labs/sentinel (the config-misconfiguration scanner):
+# different domain (source analysis vs config), different audience (MCP devs / the registry vs
+# DevOps). It REUSES the Sentinel engine (fact-model + engine crates) rather than reimplementing
+# the deterministic fact-graph / findings / report-digest machinery.
+#
+# Engine reuse: the engine (fact-model + engine) is a pinned git dependency on the public
+# anwen-labs/sentinel repo (see each crate's Cargo.toml), so anyone can clone and reproduce a
+# score. For offline/local dev, temporarily override with a path dep to a sibling checkout:
+#   fact-model = { path = "../anwen-sentinel/crates/fact-model" }   # (or a [patch] section)
