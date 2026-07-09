@@ -90,7 +90,7 @@ fn main() {
         .or_else(|| git_out(&path, &["remote", "get-url", "origin"]))
         .unwrap_or_default();
 
-    let json = report.to_json(&server, &repo_url, &commit);
+    let json = report.to_json(&model, &server, &repo_url, &commit);
     println!("{}", json.to_canonical_string());
 
     let caps = if report.caps.is_empty() {

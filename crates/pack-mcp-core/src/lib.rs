@@ -66,6 +66,17 @@ fn flag(e: &Entity, key: &str) -> bool {
     e.attr(key).and_then(|v| v.as_bool()) == Some(true)
 }
 
+/// Evidence id for a server-level finding: prefer the precise `site:*` entity the parser emits
+/// (it carries the signal's `file:line` for `engine::attach_lines`), else fall back to the server
+/// entity id (test fixtures that set server attrs directly, without a site entity).
+fn site_or(m: &FactModel, site_id: &str, fallback: &str) -> String {
+    if m.entities.iter().any(|e| e.id == site_id) {
+        site_id.to_string()
+    } else {
+        fallback.to_string()
+    }
+}
+
 // --- rule plumbing (mirrors pack-gha-core) ---------------------------------
 struct FnRule {
     id: &'static str,
@@ -147,7 +158,7 @@ fn r_credential_exfiltration(m: &FactModel) -> Vec<Finding> {
     vec![finding(
         "MCP-CREDENTIAL-EXFILTRATION",
         Severity::Critical,
-        vec![s.id.clone()],
+        vec![site_or(m, "site:secret-egress", &s.id)],
         "A secret source (env token/credential-file read) flows to a network egress sink to an undeclared/hardcoded host in the same module — a credential-exfiltration path".into(),
         "Remove the egress of the secret; if a token must be sent, restrict the destination to a declared allowlist and never forward it to a hardcoded/undeclared host.",
     )]
@@ -181,7 +192,7 @@ fn r_tls_disabled(m: &FactModel) -> Vec<Finding> {
         Some(s) if flag(s, "tls_verify_disabled") => vec![finding(
             "MCP-TLS-VERIFICATION-DISABLED",
             Severity::Medium,
-            vec![s.id.clone()],
+            vec![site_or(m, "site:tls-verify-disabled", &s.id)],
             "Code disables TLS verification (rejectUnauthorized:false / verify=False / NODE_TLS_REJECT_UNAUTHORIZED=0) — traffic can be MitM'd".into(),
             "Remove the insecure flag and fix CA trust; verify a checksum/signature for downloaded artifacts.",
         )],
@@ -257,31 +268,30 @@ fn r_deps_unpinned(m: &FactModel) -> Vec<Finding> {
     let no_lock = server
         .map(|s| s.attr("has_lockfile").and_then(|v| v.as_bool()) == Some(false))
         .unwrap_or(false);
+    let has_deps = deps(m).next().is_some();
+    // A committed lockfile pins the full transitive tree, so floating ranges in the *manifest*
+    // are idiomatic and reproducible — flagging them fired on ~every well-run repo (pure noise,
+    // 20/20 in the top-50 batch). We flag only the genuinely non-reproducible case: no lockfile
+    // committed at all. (rubric D5: "no committed lockfile"; the manifest-range clause is folded
+    // into the lockfile signal to keep the finding meaningful.)
+    if !no_lock || !has_deps {
+        return Vec::new();
+    }
     let unpinned: Vec<String> = deps(m)
         .filter(|d| d.attr("pinned").and_then(|v| v.as_bool()) == Some(false))
         .map(|d| d.id.clone())
         .collect();
-    let has_deps = deps(m).next().is_some();
-    // fire on: any unpinned dep, or (no lockfile AND there is at least one dep to pin).
-    if unpinned.is_empty() && (!no_lock || !has_deps) {
-        return Vec::new();
-    }
     let mut evidence = Vec::new();
-    if let Some(s) = server {
-        evidence.push(s.id.clone());
-    }
+    // Primary locator: the manifest that lacks a lockfile (carries file:line), else the server.
+    let anchor = server.map(|s| s.id.clone()).unwrap_or_default();
+    evidence.push(site_or(m, "site:no-lockfile", &anchor));
     evidence.extend(unpinned.iter().cloned());
-    let why = if no_lock {
-        "no committed lockfile and floating dependency ranges"
-    } else {
-        "floating dependency ranges with no upper bound"
-    };
     vec![finding(
         "MCP-DEPS-UNPINNED",
         Severity::Medium,
         evidence,
-        format!("Supply-chain: {why} — installs are not reproducible and a silent major-version bump can ship unreviewed code"),
-        "Commit a lockfile (uv.lock / poetry.lock / package-lock.json / go.sum) and pin ranges with upper bounds; pin GitHub Actions to commit SHAs.",
+        "Supply-chain: no committed lockfile (package-lock.json / uv.lock / poetry.lock / go.sum) — installs are not reproducible and a transitive dependency can change silently between installs".to_string(),
+        "Commit a lockfile (uv.lock / poetry.lock / package-lock.json / go.sum) so the full dependency tree is pinned; keep manifest ranges bounded and pin GitHub Actions to commit SHAs.",
     )]
 }
 
@@ -292,7 +302,7 @@ fn r_bind_no_auth(m: &FactModel) -> Vec<Finding> {
         Some(s) if flag(s, "binds_all_interfaces") && !flag(s, "has_auth") => vec![finding(
             "MCP-BIND-NO-AUTH",
             Severity::High,
-            vec![s.id.clone()],
+            vec![site_or(m, "site:bind-all-interfaces", &s.id)],
             "Server binds all interfaces (0.0.0.0) with no detectable inbound authentication — an internet-reachable, unauthenticated MCP endpoint".into(),
             "Bind to 127.0.0.1 for local use, or require authentication (token/OAuth) before listening on 0.0.0.0.",
         )],
@@ -304,7 +314,7 @@ fn r_bind_all(m: &FactModel) -> Vec<Finding> {
         Some(s) if flag(s, "binds_all_interfaces") && flag(s, "has_auth") => vec![finding(
             "MCP-BIND-ALL-INTERFACES",
             Severity::Medium,
-            vec![s.id.clone()],
+            vec![site_or(m, "site:bind-all-interfaces", &s.id)],
             "Server binds all interfaces (0.0.0.0) — reachable from any network interface".into(),
             "Bind to a specific interface (127.0.0.1) unless external exposure is intended and hardened.",
         )],
@@ -316,7 +326,7 @@ fn r_cors_wildcard(m: &FactModel) -> Vec<Finding> {
         Some(s) if flag(s, "cors_wildcard") => vec![finding(
             "MCP-CORS-WILDCARD",
             Severity::Medium,
-            vec![s.id.clone()],
+            vec![site_or(m, "site:cors-wildcard", &s.id)],
             "CORS allows any origin (*) — a browser on any site can call this server".into(),
             "Restrict CORS to an explicit allowlist of trusted origins; never pair wildcard origin with credentials.",
         )],
@@ -549,8 +559,8 @@ mod tests {
     #[test]
     fn scoring_is_deterministic() {
         let m = fx_http_shell_ssrf();
-        let a = run(&m).to_json("x/x", "https://x", "abc").to_canonical_string();
-        let b = run(&m).to_json("x/x", "https://x", "abc").to_canonical_string();
+        let a = run(&m).to_json(&m, "x/x", "https://x", "abc").to_canonical_string();
+        let b = run(&m).to_json(&m, "x/x", "https://x", "abc").to_canonical_string();
         assert_eq!(a, b, "same model + ruleset must reproduce identical scores.json");
     }
 

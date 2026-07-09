@@ -6,6 +6,8 @@
 pub struct ToolTaint {
     pub name: String,
     pub params: Vec<String>,
+    /// 1-based line where the tool is defined/registered (evidence locator). 0 = unknown.
+    pub line: u32,
     pub ssrf: bool,
     pub fs: bool,
     pub shell: bool,
@@ -23,6 +25,7 @@ impl ToolTaint {
         Self {
             name,
             params,
+            line: 0,
             ssrf: false,
             fs: false,
             shell: false,
@@ -38,7 +41,18 @@ impl ToolTaint {
 
 pub struct Analysis {
     pub tools: Vec<ToolTaint>,
-    pub secret_source_to_egress: bool,
+    /// `(file, line)` of the secret→exfil-host egress flow, if any (the Critical
+    /// `MCP-CREDENTIAL-EXFILTRATION` locator). JS analyzers leave `file` empty for the caller to
+    /// fill (it knows the path). `None` = no exfil flow found.
+    pub secret_egress: Option<(String, u32)>,
+}
+
+#[cfg(test)]
+impl Analysis {
+    /// Whether a secret→egress flow was detected — a test convenience over `secret_egress`.
+    pub fn secret_source_to_egress(&self) -> bool {
+        self.secret_egress.is_some()
+    }
 }
 
 /// Known credential-exfiltration destinations. The Critical `secret_source_to_egress` rule fires

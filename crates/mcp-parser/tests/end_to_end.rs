@@ -56,10 +56,17 @@ fn il_eli_like_repo_flags_unpinned_deps_and_scores_high() {
     assert!(!report.caps.iter().any(|c| c.contains("critical")));
 
     // scores.json serializes deterministically
-    let a = report.to_json("matematicsolutions/il-eli-mcp", "https://github.com/matematicsolutions/il-eli-mcp", "a2b3437").to_canonical_string();
+    let a = report.to_json(&m, "matematicsolutions/il-eli-mcp", "https://github.com/matematicsolutions/il-eli-mcp", "a2b3437").to_canonical_string();
     let report2 = score::score(&findings, &mods, &Dim::all(), mcp_parser::analyzable(&m));
-    let b = report2.to_json("matematicsolutions/il-eli-mcp", "https://github.com/matematicsolutions/il-eli-mcp", "a2b3437").to_canonical_string();
+    let b = report2.to_json(&m, "matematicsolutions/il-eli-mcp", "https://github.com/matematicsolutions/il-eli-mcp", "a2b3437").to_canonical_string();
     assert_eq!(a, b);
+
+    // rubric §6 invariant: every finding carries a concrete file:line (or artifact) locator.
+    let json = report.to_json(&m, "x/x", "https://x", "a2b3437");
+    assert!(
+        json.to_canonical_string().contains("\"file\""),
+        "evidence must include a file locator"
+    );
 }
 
 fn score_repo(files: &[RepoFile]) -> (Vec<engine::Finding>, score::ScoreReport) {

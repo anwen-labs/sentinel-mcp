@@ -160,7 +160,7 @@ fn main() {
             '?'
         };
         summary.push((repo.clone(), gchar, report.composite, findings.len()));
-        servers.push(report.to_json(repo, url, &commit));
+        servers.push(report.to_json(&model, repo, url, &commit));
 
         if !keep {
             let _ = std::fs::remove_dir_all(&dir);

@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use engine::{Finding, Severity};
-use fact_model::Json;
+use fact_model::{FactModel, Json};
 
 use crate::context::AppliedModifier;
 
@@ -233,8 +233,16 @@ pub fn score(
 }
 
 impl ScoreReport {
-    /// scores.json shape (rubric §6), using the engine's canonical Json.
-    pub fn to_json(&self, server: &str, repo_url: &str, commit: &str) -> Json {
+    /// scores.json shape (rubric §6), using the engine's canonical Json. `model` supplies each
+    /// evidence entity's provenance so every finding carries a concrete `file`+`line` locator
+    /// (rubric §6 invariant #2) resolved from its primary evidence entity.
+    pub fn to_json(&self, model: &FactModel, server: &str, repo_url: &str, commit: &str) -> Json {
+        // entity id → (file, line) from provenance, for the evidence locator.
+        let loc: BTreeMap<&str, (&str, Option<u32>)> = model
+            .entities
+            .iter()
+            .map(|e| (e.id.as_str(), (e.provenance.source_path.as_str(), e.provenance.line)))
+            .collect();
         let dims = self
             .dims
             .iter()
@@ -243,12 +251,29 @@ impl ScoreReport {
                     d.findings
                         .iter()
                         .map(|f| {
+                            // Primary locator = first evidence entity (tools/sites are placed
+                            // first). file from its provenance path; line from its provenance line,
+                            // falling back to the aggregated attach_lines() value.
+                            let primary = f.evidence.first().and_then(|id| loc.get(id.as_str()));
+                            let file = primary.map(|(p, _)| *p).filter(|p| !p.is_empty() && *p != ".");
+                            let line = primary
+                                .and_then(|(_, l)| *l)
+                                .or_else(|| f.lines.first().copied());
                             Json::Obj(vec![
                                 ("rule".into(), Json::Str(f.rule_id.clone())),
                                 ("severity".into(), Json::Str(f.severity.as_str().into())),
                                 (
                                     "evidence".into(),
                                     Json::Obj(vec![
+                                        (
+                                            "file".into(),
+                                            file.map(|p| Json::Str(p.to_string()))
+                                                .unwrap_or(Json::Null),
+                                        ),
+                                        (
+                                            "line".into(),
+                                            line.map(|l| Json::Int(l as i64)).unwrap_or(Json::Null),
+                                        ),
                                         (
                                             "entities".into(),
                                             Json::Arr(
