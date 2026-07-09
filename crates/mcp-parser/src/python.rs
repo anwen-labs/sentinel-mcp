@@ -44,6 +44,64 @@ const EGRESS: &[&str] = &[
     "requests.post(", "requests.get(", "requests.put(", "httpx.post(", "httpx.get(", "urlopen(",
     "session.post(", ".send(", "socket.send", "aiohttp",
 ];
+/// Genuine LOCAL-fetch helpers (the server downloads the URL in-process) that are not raw HTTP-lib
+/// calls — a URL-ish tool param flowing into one is a local SSRF surface, like `requests.get`. This
+/// is the gap that let markitdown's `convert_uri(uri)` SSRF grade clean (BlueRock disclosed it).
+/// Deliberately NARROW: generic `.scrape(`/`.crawl(`/`.fetch(` are excluded because SaaS-proxy
+/// servers (firecrawl, tavily, exa) forward the URL to their own API and do NOT fetch it locally —
+/// flagging those would be a false positive (the fetch happens on the vendor's infra, not here).
+const FETCH_WRAP: &[&str] = &[
+    "convert_uri", "convert_url", "urlretrieve(", "fetch_url(", "download_url(", "read_url(",
+    "load_url(", "open_url(", "from_url(",
+];
+/// A URL-validation / SSRF guard in a tool body suppresses the SSRF finding (allowlist, private-IP
+/// block, explicit URL validation) — precision guard so a server that validates isn't over-flagged.
+const URL_GUARD: &[&str] = &[
+    "allowlist", "allow_list", "allowed_host", "allowed_domain", "is_private", "ip_address(",
+    "block_private", "validate_url", "is_allowed_url", "ssrf", "blocklist", "deny_list",
+    "is_global", "check_url",
+];
+/// A path-validation / jail guard in a tool body suppresses the filesystem-traversal finding
+/// (resolve-under-root, reject `..`, secure-join) — e.g. serena's `validate_relative_path`.
+const PATH_GUARD: &[&str] = &[
+    "validate_relative_path", "is_relative_to", ".relative_to(", "commonpath", "commonprefix",
+    "realpath", "secure_filename", "safe_join", "validate_path", "check_path", "\"..\"", "'..'",
+];
+
+/// Leading-space indentation width of a line.
+fn indent(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
+/// A parameter whose name implies it carries a URL/URI (so passing it to a fetch wrapper is SSRF).
+fn is_urlish(param: &str) -> bool {
+    let p = param.to_ascii_lowercase();
+    ["url", "uri", "endpoint", "webhook", "link", "href", "address", "_src", "source"]
+        .iter()
+        .any(|k| p.contains(k))
+}
+
+/// The lines belonging to a tool's own function body (after its signature, until it dedents),
+/// so taint and guards attribute to the RIGHT tool in a multi-tool file. `def_idx` is the 0-based
+/// line of the tool's `def`/`async def`.
+fn tool_body<'a>(lines: &[&'a str], def_idx: usize) -> Vec<&'a str> {
+    if def_idx >= lines.len() {
+        return Vec::new();
+    }
+    let def_indent = indent(lines[def_idx]);
+    let (_, body_start) = accumulate_sig(lines, def_idx);
+    let mut out = Vec::new();
+    let mut i = body_start;
+    while i < lines.len() {
+        let l = lines[i];
+        if !l.trim().is_empty() && indent(l) <= def_indent {
+            break;
+        }
+        out.push(l);
+        i += 1;
+    }
+    out
+}
 
 fn def_name(sig: &str) -> String {
     let s = sig.trim_start();
@@ -341,7 +399,6 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
     let idx = function_index(files);
     let mut tools: Vec<ToolTaint> = Vec::new();
     let mut names_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut all_lines: Vec<(String, String)> = Vec::new(); // (line, file path)
     let mut all_content = String::new();
     for (path, content) in files {
         let lines: Vec<&str> = content.lines().collect();
@@ -355,9 +412,6 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
             t.line = defi as u32 + 1;
             t.desc_hidden_unicode = lines[defi..hi].iter().any(|l| l.chars().any(is_zero_width));
             tools.push(t);
-        }
-        for l in &lines {
-            all_lines.push(((*l).to_string(), (*path).to_string()));
         }
         all_content.push_str(content);
         all_content.push('\n');
@@ -373,21 +427,36 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
         tools.push(t);
     }
 
+    // Per-tool-body taint: scan only each tool's own function body (not the whole file), so sinks
+    // and guards attribute to the RIGHT tool — a multi-tool file no longer cross-contaminates
+    // (the class of FP that over-flagged serena/atlassian) — and a URL/path validation guard in
+    // the body can suppress an over-flag. Same-file by construction (a body lives in one file), so
+    // cross-file inference stays deferred to v1.2.
+    let file_lines: std::collections::BTreeMap<&str, Vec<&str>> =
+        files.iter().map(|(p, c)| (*p, c.lines().collect())).collect();
     for t in tools.iter_mut() {
-        for (line, file) in &all_lines {
-            // v1: all source-flow taint is SAME-FILE — a sink is linked to a tool param only when
-            // both live in the tool's own file, so the identifiers are genuinely the same binding.
-            // Cross-file name matching (no call graph) is too coincidental for a precision-first
-            // grade — a `title`/`summary`/`court` param collides with an unrelated variable of the
-            // same name sitting next to a sink (the mcp-atlassian FS/redos false positives). True
-            // inter-procedural taint is deferred to v1.2.
-            if *file != t.file || !t.params.iter().any(|p| word_present(line, p)) {
+        let lines = match file_lines.get(t.file.as_str()) {
+            Some(l) => l,
+            None => continue,
+        };
+        let body = tool_body(lines, (t.line.max(1) - 1) as usize);
+        let url_guard = body.iter().any(|l| any_marker(l, URL_GUARD));
+        let path_guard = body.iter().any(|l| any_marker(l, PATH_GUARD));
+        for line in &body {
+            if !t.params.iter().any(|p| word_present(line, p)) {
                 continue;
             }
             if any_marker(line, SHELL) {
                 t.shell = true;
             }
             if any_marker(line, SSRF) {
+                t.ssrf = true;
+            }
+            // Wrapped fetch: a URL-ish param passed into a fetch/convert/scrape helper (not a raw
+            // HTTP-lib call) — the markitdown `convert_uri(uri)` gap.
+            if any_marker(line, FETCH_WRAP)
+                && t.params.iter().any(|p| is_urlish(p) && word_present(line, p))
+            {
                 t.ssrf = true;
             }
             if any_marker(line, FS) {
@@ -406,6 +475,14 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
             {
                 t.redos = true;
             }
+        }
+        // A validation guard in the tool's own body suppresses the matching surface (precision):
+        // an allowlist/private-IP block for URLs, a resolve-under-root/reject-`..` for paths.
+        if url_guard {
+            t.ssrf = false;
+        }
+        if path_guard {
+            t.fs = false;
         }
         let has_limit = t.params.iter().any(|p| LIMIT_NAMES.contains(&p.as_str()));
         if has_limit {
@@ -462,6 +539,42 @@ def il_search_case_law(query: str, court: str = None, limit: int = 20):
         let src = "@mcp.tool()\ndef run_cmd(command: str):\n    return subprocess.run(command, shell=True)\n";
         let a = analyze(src);
         assert!(a.tools[0].shell);
+    }
+
+    #[test]
+    fn detects_wrapped_fetch_ssrf() {
+        // markitdown regression: convert_to_markdown(uri) -> convert_uri(uri), a wrapped fetch, not
+        // a raw requests.get. A URL-ish param into a fetch helper must flag SSRF.
+        let src = "@mcp.tool()\nasync def convert_to_markdown(uri: str) -> str:\n    return MarkItDown().convert_uri(uri).markdown\n";
+        let a = analyze(src);
+        assert!(a.tools[0].ssrf, "wrapped convert_uri(uri) is an SSRF surface");
+    }
+
+    #[test]
+    fn url_guard_suppresses_ssrf() {
+        // A tool that validates the URL against an allowlist is not flagged.
+        let src = "@mcp.tool()\ndef fetch(url: str) -> str:\n    if not is_allowed_url(url):\n        raise ValueError()\n    return requests.get(url).text\n";
+        let a = analyze(src);
+        assert!(!a.tools[0].ssrf, "validated URL (allowlist) must suppress SSRF");
+    }
+
+    #[test]
+    fn path_guard_suppresses_fs() {
+        // serena regression: a file tool that jails via validate_relative_path is not a traversal.
+        let src = "@mcp.tool()\ndef read_file(relative_path: str) -> str:\n    validate_relative_path(relative_path)\n    return open(relative_path).read()\n";
+        let a = analyze(src);
+        assert!(!a.tools[0].fs, "validate_relative_path must suppress FS-unscoped");
+    }
+
+    #[test]
+    fn multi_tool_file_no_cross_contamination() {
+        // Two tools in one file: only the one whose body has the sink is flagged.
+        let src = "@mcp.tool()\ndef writer(path: str):\n    open(path, 'w').write('x')\n\n@mcp.tool()\ndef greeter(path: str):\n    return 'hi ' + path\n";
+        let a = analyze(src);
+        let w = a.tools.iter().find(|t| t.name == "writer").unwrap();
+        let g = a.tools.iter().find(|t| t.name == "greeter").unwrap();
+        assert!(w.fs, "writer opens the path");
+        assert!(!g.fs, "greeter only echoes the path — must not inherit writer's sink");
     }
 
     #[test]

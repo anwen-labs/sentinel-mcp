@@ -709,16 +709,12 @@ fn http_exposure(files: &[RepoFile]) -> Exposure {
     e
 }
 
-/// Coverage gate: false when this is an MCP server but we resolved zero tools (so the tool-driven
-/// dimensions were never really analyzed — the grade must be withheld, not defaulted to A).
+/// Coverage gate: false when we resolved **zero tools**, so the tool-driven dimensions were never
+/// really analyzed — the grade must be withheld, not defaulted to A. Every target is nominally an
+/// MCP server, so no tools means either a parser gap or a non-source repo (e.g. a docs/CLI repo
+/// with no analyzable source at all, which previously slipped through as A/100 on zero analysis).
 pub fn analyzable(m: &FactModel) -> bool {
-    let is_mcp = m
-        .entities
-        .iter()
-        .find(|e| e.attr("mcp_kind").and_then(|v| v.as_str()) == Some("server"))
-        .map(|e| e.attr("is_mcp").and_then(|v| v.as_bool()) == Some(true))
-        .unwrap_or(false);
-    !(is_mcp && kind_count(m, "tool") == 0)
+    kind_count(m, "tool") > 0
 }
 
 /// One-line human summary of the parsed model (transport, tool/dep counts, languages) for CLI/debug.

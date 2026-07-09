@@ -215,6 +215,13 @@ pub fn score(
         grade = worse(grade, 'D');
         caps.push("shell-exec-surface:cap-D".into());
     }
+    // Any unresolved High (after context modifiers) disqualifies an A: a "Grade A" listed next to a
+    // High-severity finding (e.g. an SSRF surface) is incoherent to a reader. Caps at B; D1/D2
+    // highs and shell-exec cap lower still (above).
+    if findings.iter().any(|f| f.severity == Severity::High) {
+        grade = worse(grade, 'B');
+        caps.push("high-unresolved:cap-B".into());
+    }
 
     let status = if analyzable {
         ScoreStatus::Scored
