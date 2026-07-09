@@ -346,18 +346,34 @@ fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, bool) {
     let mut out: Vec<ToolRec> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut secret_exfil = false;
-    for f in files.iter().filter(|f| is_source(&f.path)) {
-        let analysis = if f.path.ends_with(".py") {
-            python::analyze(&f.content)
-        } else if is_js_ts(&f.path) {
-            js::analyze(&f.content)
-        } else {
-            continue;
-        };
-        if analysis.secret_source_to_egress {
+
+    // Python: analyze the whole repo together (cross-file taint — sinks in helper modules link
+    // back to the tool that owns the param).
+    let py: Vec<(&str, &str)> = files
+        .iter()
+        .filter(|f| f.path.ends_with(".py"))
+        .map(|f| (f.path.as_str(), f.content.as_str()))
+        .collect();
+    if !py.is_empty() {
+        let a = python::analyze_repo(&py);
+        if a.secret_source_to_egress {
             secret_exfil = true;
         }
-        for t in analysis.tools {
+        for t in a.tools {
+            if !t.name.is_empty() && seen.insert(t.name.clone()) {
+                let path = if t.file.is_empty() { ".".to_string() } else { t.file.clone() };
+                out.push(ToolRec { name: t.name.clone(), path, taint: Some(t) });
+            }
+        }
+    }
+
+    // JS/TS: per-file for now (repo-wide JS is a later slice).
+    for f in files.iter().filter(|f| is_js_ts(&f.path)) {
+        let a = js::analyze(&f.content);
+        if a.secret_source_to_egress {
+            secret_exfil = true;
+        }
+        for t in a.tools {
             if !t.name.is_empty() && seen.insert(t.name.clone()) {
                 out.push(ToolRec { name: t.name.clone(), path: f.path.clone(), taint: Some(t) });
             }

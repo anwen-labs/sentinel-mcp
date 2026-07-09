@@ -14,6 +14,8 @@ pub struct ToolTaint {
     pub unbounded_limit: bool,
     pub redos: bool,
     pub desc_hidden_unicode: bool,
+    /// Source file the tool is defined in (for provenance + same-file taint scoping).
+    pub file: String,
 }
 
 impl ToolTaint {
@@ -29,6 +31,7 @@ impl ToolTaint {
             unbounded_limit: false,
             redos: false,
             desc_hidden_unicode: false,
+            file: String::new(),
         }
     }
 }

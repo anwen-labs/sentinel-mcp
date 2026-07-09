@@ -194,22 +194,54 @@ fn secret_exfil(content: &str) -> bool {
     })
 }
 
-pub fn analyze(content: &str) -> Analysis {
-    let lines: Vec<&str> = content.lines().collect();
+/// Over-generic param names (≥5 chars) that must NOT seed *cross-file* taint — too common, would
+/// cause false positives when matched against unrelated helper code. Shorter generics (`url`,
+/// `path`, `id`, `data`, `key`, …) are excluded by the length floor in [`is_distinctive`].
+const GENERIC_PARAMS: &[&str] = &[
+    "query", "input", "value", "content", "params", "request", "context", "kwargs", "result",
+    "options", "output", "string", "config", "message",
+];
 
-    let mut tools: Vec<ToolTaint> = tool_functions(&lines)
-        .into_iter()
-        .map(|(defi, name, params)| {
+/// A param distinctive enough to follow across files (name-based reachability without a call
+/// graph). Distinctive = ≥5 chars and not an over-generic name (e.g. `court`, `judgment_id`,
+/// `collection_name` yes; `query`, `url`, `path` no — those stay within their own file).
+fn is_distinctive(p: &str) -> bool {
+    p.len() >= 5 && !GENERIC_PARAMS.contains(&p)
+}
+
+/// Repo-wide analysis: discover tools across all Python files, then scan ALL files' lines for
+/// sinks referencing a tool's params. The cross-file hop — a sink in a helper module (e.g.
+/// il-eli's `str.contains(court)` in case_law.py) is linked to the tool that owns `court` in
+/// server.py. Within a tool's own file, any param matches; across files, only *distinctive*
+/// params do (precision guard). Name-based reachability, not a call graph.
+pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
+    let mut tools: Vec<ToolTaint> = Vec::new();
+    let mut all_lines: Vec<(String, String)> = Vec::new(); // (line, file path)
+    let mut all_content = String::new();
+    for (path, content) in files {
+        let lines: Vec<&str> = content.lines().collect();
+        for (defi, name, params) in tool_functions(&lines) {
             let hi = (defi + 15).min(lines.len());
             let mut t = ToolTaint::new(name, params);
+            t.file = (*path).to_string();
             t.desc_hidden_unicode = lines[defi..hi].iter().any(|l| l.chars().any(is_zero_width));
-            t
-        })
-        .collect();
+            tools.push(t);
+        }
+        for l in &lines {
+            all_lines.push(((*l).to_string(), (*path).to_string()));
+        }
+        all_content.push_str(content);
+        all_content.push('\n');
+    }
 
     for t in tools.iter_mut() {
-        for line in &lines {
-            if !t.params.iter().any(|p| word_present(line, p)) {
+        for (line, file) in &all_lines {
+            let same_file = *file == t.file;
+            let matched = t
+                .params
+                .iter()
+                .any(|p| (same_file || is_distinctive(p)) && word_present(line, p));
+            if !matched {
                 continue;
             }
             if any_marker(line, SHELL) {
@@ -237,13 +269,13 @@ pub fn analyze(content: &str) -> Analysis {
         }
         let has_limit = t.params.iter().any(|p| LIMIT_NAMES.contains(&p.as_str()));
         if has_limit {
-            let guarded = content.contains("MAX_")
-                || content.contains("min(")
+            let guarded = all_content.contains("MAX_")
+                || all_content.contains("min(")
                 || t.params.iter().any(|p| {
-                    content.contains(&format!("{p} >"))
-                        || content.contains(&format!("{p} <"))
-                        || content.contains(&format!("> {p}"))
-                        || content.contains(&format!("{p}>"))
+                    all_content.contains(&format!("{p} >"))
+                        || all_content.contains(&format!("{p} <"))
+                        || all_content.contains(&format!("> {p}"))
+                        || all_content.contains(&format!("{p}>"))
                 });
             if !guarded {
                 t.unbounded_limit = true;
@@ -252,9 +284,15 @@ pub fn analyze(content: &str) -> Analysis {
     }
 
     Analysis {
-        secret_source_to_egress: secret_exfil(content),
+        secret_source_to_egress: secret_exfil(&all_content),
         tools,
     }
+}
+
+/// Single-file convenience (used by tests). Cross-file matching is a no-op with one file.
+#[cfg(test)]
+pub fn analyze(content: &str) -> Analysis {
+    analyze_repo(&[("", content)])
 }
 
 #[cfg(test)]
@@ -284,6 +322,26 @@ def il_search_case_law(query: str, court: str = None, limit: int = 20):
         let src = "@mcp.tool()\ndef run_cmd(command: str):\n    return subprocess.run(command, shell=True)\n";
         let a = analyze(src);
         assert!(a.tools[0].shell);
+    }
+
+    #[test]
+    fn cross_file_distinctive_param() {
+        // il-eli shape: tool owns `court` in one file, the sink is in a helper module.
+        let server = "@mcp.tool()\ndef search(query: str, court: str = None):\n    return helper(query, court)\n";
+        let helper = "def helper(query, court):\n    return df[c].str.contains(court, na=False)\n";
+        let a = analyze_repo(&[("server.py", server), ("case_law.py", helper)]);
+        let t = a.tools.iter().find(|t| t.name == "search").unwrap();
+        assert!(t.redos, "distinctive param 'court' should reach str.contains across files");
+    }
+
+    #[test]
+    fn generic_param_does_not_cross_files() {
+        // 'query' is generic → must NOT match a sink in an unrelated file (precision guard).
+        let server = "@mcp.tool()\ndef s(query: str):\n    return wrap(query)\n";
+        let other = "def unrelated(query):\n    return subprocess.run(query, shell=True)\n";
+        let a = analyze_repo(&[("a.py", server), ("b.py", other)]);
+        let t = a.tools.iter().find(|t| t.name == "s").unwrap();
+        assert!(!t.shell, "generic 'query' must not seed cross-file taint");
     }
 
     #[test]
