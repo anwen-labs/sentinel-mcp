@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you reference this scorecard or its data, please cite it as below."
+title: "Sentinel MCP Scorecard"
+abstract: >-
+  An open, reproducible security scorecard for Model Context Protocol (MCP)
+  servers. Every grade is a deterministic function of a public repository at a
+  pinned commit, and every finding cites a specific line of code.
+type: software
+authors:
+  - name: "Anwen Labs"
+license: MIT
+repository-code: "https://github.com/anwen-labs/sentinel-mcp"
+url: "https://github.com/anwen-labs/sentinel-mcp"
+version: "0.1.0"
+date-released: "2026-07-09"
+keywords:
+  - "Model Context Protocol"
+  - MCP
+  - security
+  - static-analysis
+  - SSRF
+  - supply-chain
+  - LLM

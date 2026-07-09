@@ -1,0 +1,28 @@
+name: Request a server be scored
+description: Suggest an MCP server to add to the scorecard.
+title: "[scan]: <owner/name>"
+labels: ["scan-request"]
+body:
+  - type: input
+    id: repo
+    attributes:
+      label: Repository
+      description: The public repository of the MCP server.
+      placeholder: https://github.com/owner/name
+    validations:
+      required: true
+  - type: input
+    id: usage
+    attributes:
+      label: Usage signal
+      description: An install/download signal (e.g. weekly npm/PyPI downloads) so we can rank by real usage.
+      placeholder: "e.g. 40k weekly npm downloads"
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything relevant - transport, language, whether the tools live in the repo or a dependency.
+    validations:
+      required: false

@@ -1,0 +1,46 @@
+name: Report an inaccurate finding
+description: A false positive, a missed issue, or a finding that is fixed at a later commit on a scored server.
+title: "[finding]: <server> <rule>"
+labels: ["finding-accuracy"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping keep the scorecard honest. Because scoring is deterministic
+        and pins a commit, we can reproduce your case and show the exact diff. If you
+        maintain the server, this is your right of reply - we will correct or withhold
+        anything we cannot stand behind.
+  - type: input
+    id: server
+    attributes:
+      label: Server
+      description: owner/name of the scored MCP server.
+      placeholder: owner/mcp-server
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule
+      description: The rule ID from the finding.
+      placeholder: MCP-SSRF-USER-CONTROLLED-URL
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - False positive (flagged but not actually an issue)
+        - False negative (a real issue we missed)
+        - Fixed at a later commit
+        - Missing context / severity dispute
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: The file:line in question and why the finding is inaccurate (e.g. a validation guard we missed, a URL that is forwarded to a scoped API, a fixed commit SHA).
+    validations:
+      required: true

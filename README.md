@@ -12,9 +12,10 @@ MCP servers, a different job from config scanning, so it lives in its own repo.
 ## What it does
 - Parses an MCP server repo into a normalized fact model (`mcp-parser`): transport, dependency
   pinning + lockfiles, tool inventory, and (via the source-flow pass) the taint facts.
-- Scores it against 13+ MCP rules (`pack-mcp-core`) across five weighted dimensions — tool-description
+- Scores it against 16 MCP rules (`pack-mcp-core`) across five weighted dimensions — tool-description
   injection, credential handling & exfiltration, network egress / SSRF, permission scope vs declared
-  function, and supply-chain provenance — mapped to CWE, OWASP MCP Top 10, MAESTRO, and ETDI.
+  function, and supply-chain provenance — mapped to CWE, OWASP MCP Top 10, MAESTRO, and ETDI. See
+  [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) for the full ruleset, scoring, grade caps, and coverage gate.
 - Applies **deterministic context modifiers** (e.g. a stdio, read-only, keyless server is not
   scored as if it were internet-exposed) and records each one, so the grade is both nuanced and
   reproducible.
@@ -54,5 +55,12 @@ scoping and URL/path validation guards. Taint is same-file; cross-file / inter-p
 Go tool-level taint, and class/registry tool shapes are on the roadmap (see the withheld list in
 `FINDINGS.md` for exactly what isn't yet covered).
 
+## Contributing & security
+- [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) — how a repo becomes a grade (rules, scoring, caps, coverage).
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — report an inaccurate finding, request a scan, or propose a rule.
+- [`SECURITY.md`](SECURITY.md) — how to report an issue in the scanner, and our disclosure policy for
+  findings about other projects (including maintainers' right of reply).
+
 ## License
-MIT.
+MIT — see [`LICENSE`](LICENSE).
+
