@@ -171,7 +171,7 @@ pub fn score(
         }
     }
 
-    let composite = if den == 0 { 100 } else { (num + den / 2) / den }; // rounded
+    let composite = (num + den / 2).checked_div(den).unwrap_or(100); // rounded; den==0 -> 100
     let mut grade = band(composite);
     let mut caps = Vec::new();
 

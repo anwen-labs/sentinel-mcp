@@ -5,10 +5,11 @@
 //! dependency names + pin status (package.json / pyproject.toml / requirements.txt),
 //! languages, `tls_verify_disabled` (presence scan). **Heuristic:** tool inventory
 //! (count/names) + `read_only_hint` from a light source scan — labeled, best-effort.
-//! **TODO — the AST pass:** the source-flow taint flags (`*_from_input`,
-//! `secret_source_to_egress`, `insecure_deser`) need a JS/TS + Python AST (tree-sitter).
-//! This parser deliberately does NOT set them from regex (false-positive risk); the
-//! corresponding `pack-mcp-core` rules simply don't fire until the AST pass lands.
+//! **Source-flow (Python — done, see `python.rs`):** taint-lite links sink calls to a tool's
+//! parameter names → `ssrf_url_from_input`, `fs_path_from_input`, `shell_exec_from_input`,
+//! `sql_from_input`, `insecure_deser`, `unbounded_limit`, `redos_regex`, `desc_hidden_unicode`,
+//! plus module-level `secret_source_to_egress` (secret → known exfil host). **TODO:** the same
+//! pass for JS/TS, and inter-procedural taint (v1.2).
 //!
 //! Core (`parse_repo`) is a **pure function** of the input files (determinism). `read_repo`
 //! is a thin filesystem walk for the CLI/harness.
@@ -16,6 +17,8 @@
 use fact_model::{
     sha256_prefixed, AttrValue, Entity, EntityKind, FactModel, Provenance, SourceDescriptor,
 };
+
+mod python;
 
 pub const PARSER_VERSION: &str = "0.1.0";
 
@@ -46,7 +49,7 @@ pub struct RepoFile {
 
 // --- small helpers ---------------------------------------------------------
 fn basename(p: &str) -> &str {
-    p.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(p)
+    p.rsplit(['/', '\\']).next().unwrap_or(p)
 }
 fn is_source(p: &str) -> bool {
     let b = basename(p);
@@ -299,9 +302,10 @@ fn all_read_only(files: &[RepoFile]) -> Option<bool> {
     }
 }
 
-struct ToolHit {
+struct ToolRec {
     name: String,
     path: String,
+    py: Option<python::PyTool>,
 }
 
 fn quoted_after(hay: &str, marker: &str) -> Vec<String> {
@@ -324,41 +328,35 @@ fn quoted_after(hay: &str, marker: &str) -> Vec<String> {
     out
 }
 
-/// Heuristic tool inventory (count + names). Not a substitute for the AST pass — used only for
-/// the per-server tool inventory (parity with BlueRock), not to drive taint rules.
-fn extract_tools(files: &[RepoFile]) -> Vec<ToolHit> {
-    let mut out: Vec<ToolHit> = Vec::new();
+/// Tool inventory + taint facts. Python files get the source-flow analysis (`python::analyze`);
+/// JS/TS files get name-only extraction for now (their AST pass is the next slice). Returns the
+/// tool records and whether any module has a secret→exfil flow.
+fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, bool) {
+    let mut out: Vec<ToolRec> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut secret_exfil = false;
     for f in files.iter().filter(|f| is_source(&f.path)) {
-        let c = &f.content;
-        // JS/TS: server.tool("name", ...), registerTool("name", ...)
-        let mut names = quoted_after(c, ".tool(");
-        names.extend(quoted_after(c, "registerTool("));
-        // Python: @mcp.tool / @app.tool decorator -> capture the following `def <name>(`.
         if f.path.ends_with(".py") {
-            for (i, line) in c.lines().enumerate() {
-                let t = line.trim_start();
-                if t.starts_with("@mcp.tool") || t.starts_with("@app.tool") || t.starts_with("@server.tool") || t.starts_with("@tool") {
-                    for next in c.lines().skip(i + 1).take(3) {
-                        if let Some(rest) = next.trim_start().strip_prefix("def ") {
-                            let name: String =
-                                rest.chars().take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_').collect();
-                            if !name.is_empty() {
-                                names.push(name);
-                            }
-                            break;
-                        }
-                    }
+            let a = python::analyze(&f.content);
+            if a.secret_source_to_egress {
+                secret_exfil = true;
+            }
+            for t in a.tools {
+                if !t.name.is_empty() && seen.insert(t.name.clone()) {
+                    out.push(ToolRec { name: t.name.clone(), path: f.path.clone(), py: Some(t) });
+                }
+            }
+        } else {
+            let mut names = quoted_after(&f.content, ".tool(");
+            names.extend(quoted_after(&f.content, "registerTool("));
+            for n in names {
+                if !n.is_empty() && seen.insert(n.clone()) {
+                    out.push(ToolRec { name: n, path: f.path.clone(), py: None });
                 }
             }
         }
-        for n in names {
-            if seen.insert(n.clone()) {
-                out.push(ToolHit { name: n, path: f.path.clone() });
-            }
-        }
     }
-    out
+    (out, secret_exfil)
 }
 
 // --- core: pure function of the input files --------------------------------
@@ -396,7 +394,7 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
         .map(|f| f.path.clone())
         .unwrap_or_else(|| ".".to_string());
 
-    let tools = extract_tools(files);
+    let (tools, secret_exfil) = collect_tools(files);
     let tls = files.iter().filter(|f| is_source(&f.path)).any(|f| tls_disabled(&f.content));
 
     let mut langs: Vec<&'static str> = Vec::new();
@@ -427,15 +425,31 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
     if let Some(ro) = all_read_only(files) {
         sattrs.push(("all_tools_read_only", AttrValue::Bool(ro)));
     }
+    if secret_exfil {
+        sattrs.push(("secret_source_to_egress", AttrValue::Bool(true)));
+    }
     entities.push(ent(format!("mcp_server:{name}"), &server_path, sattrs));
 
-    // tool entities (inventory only; no taint facts in the structural pass)
+    // tool entities (inventory + Python source-flow taint facts)
     for t in &tools {
-        entities.push(ent(
-            format!("tool:{}", t.name),
-            &t.path,
-            vec![("mcp_kind", s("tool")), ("name", s(&t.name))],
-        ));
+        let mut a: Vec<(&str, AttrValue)> = vec![("mcp_kind", s("tool")), ("name", s(&t.name))];
+        if let Some(py) = &t.py {
+            for (flag, key) in [
+                (py.ssrf, "ssrf_url_from_input"),
+                (py.fs, "fs_path_from_input"),
+                (py.shell, "shell_exec_from_input"),
+                (py.sql, "sql_from_input"),
+                (py.deser, "insecure_deser"),
+                (py.unbounded_limit, "unbounded_limit"),
+                (py.redos, "redos_regex"),
+                (py.desc_hidden_unicode, "desc_hidden_unicode"),
+            ] {
+                if flag {
+                    a.push((key, AttrValue::Bool(true)));
+                }
+            }
+        }
+        entities.push(ent(format!("tool:{}", t.name), &t.path, a));
     }
 
     // dependency entities
@@ -534,7 +548,7 @@ mod tests {
     fn f(path: &str, content: &str) -> RepoFile {
         RepoFile { path: path.into(), content: content.into() }
     }
-    fn server<'a>(m: &'a FactModel) -> &'a Entity {
+    fn server(m: &FactModel) -> &Entity {
         m.entities
             .iter()
             .find(|e| e.attr("mcp_kind").and_then(|v| v.as_str()) == Some("server"))

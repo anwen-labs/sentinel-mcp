@@ -105,7 +105,7 @@ fn per_tool(
     msg: fn(&str) -> String,
 ) -> Vec<Finding> {
     tools(m)
-        .filter(|t| pred(*t))
+        .filter(|t| pred(t))
         .map(|t| {
             let name = t.attr("name").and_then(|v| v.as_str()).unwrap_or(&t.id);
             finding(rule_id, sev, vec![t.id.clone()], msg(name), fix)
@@ -258,7 +258,9 @@ fn r_deps_unpinned(m: &FactModel) -> Vec<Finding> {
         .filter(|d| d.attr("pinned").and_then(|v| v.as_bool()) == Some(false))
         .map(|d| d.id.clone())
         .collect();
-    if !no_lock && unpinned.is_empty() {
+    let has_deps = deps(m).next().is_some();
+    // fire on: any unpinned dep, or (no lockfile AND there is at least one dep to pin).
+    if unpinned.is_empty() && (!no_lock || !has_deps) {
         return Vec::new();
     }
     let mut evidence = Vec::new();
