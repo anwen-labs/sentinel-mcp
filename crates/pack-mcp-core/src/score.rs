@@ -92,9 +92,28 @@ pub struct DimScore {
     pub findings: Vec<Finding>,
 }
 
+/// Whether the scan achieved enough coverage to publish a grade. `InsufficientCoverage` means the
+/// tool surface could not be analyzed (an MCP server we couldn't resolve tools for) — the grade is
+/// withheld so we never publish an unearned A.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoreStatus {
+    Scored,
+    InsufficientCoverage,
+}
+
+impl ScoreStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScoreStatus::Scored => "scored",
+            ScoreStatus::InsufficientCoverage => "insufficient_coverage",
+        }
+    }
+}
+
 pub struct ScoreReport {
     pub composite: u32,
     pub grade: char,
+    pub status: ScoreStatus,
     pub caps: Vec<String>,
     pub dims: Vec<DimScore>,
     pub modifiers: Vec<AppliedModifier>,
@@ -139,6 +158,7 @@ pub fn score(
     findings: &[Finding],
     modifiers: &[AppliedModifier],
     scored_dims: &[Dim],
+    analyzable: bool,
 ) -> ScoreReport {
     let mut dims = Vec::new();
     let mut num = 0u32;
@@ -193,9 +213,16 @@ pub fn score(
         caps.push("shell-exec-surface:cap-D".into());
     }
 
+    let status = if analyzable {
+        ScoreStatus::Scored
+    } else {
+        ScoreStatus::InsufficientCoverage
+    };
+
     ScoreReport {
         composite,
         grade,
+        status,
         caps,
         dims,
         modifiers: modifiers.to_vec(),
@@ -267,13 +294,22 @@ impl ScoreReport {
                 .collect(),
         );
 
+        let scored = self.status == ScoreStatus::Scored;
+        // Withhold grade/composite when coverage was insufficient — never publish an unearned grade.
+        let (grade, composite) = if scored {
+            (Json::Str(self.grade.to_string()), Json::Int(self.composite as i64))
+        } else {
+            (Json::Null, Json::Null)
+        };
+
         Json::Obj(vec![
             ("server".into(), Json::Str(server.into())),
             ("repo_url".into(), Json::Str(repo_url.into())),
             ("commit".into(), Json::Str(commit.into())),
             ("ruleset_version".into(), Json::Str("pack-mcp-core@0.1.0".into())),
-            ("composite".into(), Json::Int(self.composite as i64)),
-            ("grade".into(), Json::Str(self.grade.to_string())),
+            ("status".into(), Json::Str(self.status.as_str().into())),
+            ("composite".into(), composite),
+            ("grade".into(), grade),
             (
                 "grade_caps_applied".into(),
                 Json::Arr(self.caps.iter().cloned().map(Json::Str).collect()),

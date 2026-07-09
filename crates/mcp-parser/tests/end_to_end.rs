@@ -46,7 +46,7 @@ fn il_eli_like_repo_flags_unpinned_deps_and_scores_high() {
     let mut findings = engine::run_pack(&pack, &m);
     engine::attach_lines(&mut findings, &m);
     let (findings, mods) = context::apply(findings, &m);
-    let report = score::score(&findings, &mods, &Dim::all());
+    let report = score::score(&findings, &mods, &Dim::all(), mcp_parser::analyzable(&m));
 
     assert!(
         findings.iter().any(|x| x.rule_id == "MCP-DEPS-UNPINNED"),
@@ -57,7 +57,7 @@ fn il_eli_like_repo_flags_unpinned_deps_and_scores_high() {
 
     // scores.json serializes deterministically
     let a = report.to_json("matematicsolutions/il-eli-mcp", "https://github.com/matematicsolutions/il-eli-mcp", "a2b3437").to_canonical_string();
-    let report2 = score::score(&findings, &mods, &Dim::all());
+    let report2 = score::score(&findings, &mods, &Dim::all(), mcp_parser::analyzable(&m));
     let b = report2.to_json("matematicsolutions/il-eli-mcp", "https://github.com/matematicsolutions/il-eli-mcp", "a2b3437").to_canonical_string();
     assert_eq!(a, b);
 }
@@ -68,7 +68,7 @@ fn score_repo(files: &[RepoFile]) -> (Vec<engine::Finding>, score::ScoreReport) 
     let mut findings = engine::run_pack(&pack, &m);
     engine::attach_lines(&mut findings, &m);
     let (findings, mods) = context::apply(findings, &m);
-    let report = score::score(&findings, &mods, &Dim::all());
+    let report = score::score(&findings, &mods, &Dim::all(), mcp_parser::analyzable(&m));
     (findings, report)
 }
 

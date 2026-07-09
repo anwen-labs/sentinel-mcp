@@ -144,16 +144,22 @@ fn main() {
         let mut findings = engine::run_pack(&pack, &model);
         engine::attach_lines(&mut findings, &model);
         let (findings, mods) = context::apply(findings, &model);
-        let report = score::score(&findings, &mods, &Dim::all());
+        let report = score::score(&findings, &mods, &Dim::all(), mcp_parser::analyzable(&model));
 
-        eprintln!(
-            "grade {} ({})  ·  {}  ·  {} finding(s)",
-            report.grade,
-            report.composite,
-            model_summary(&model),
-            findings.len()
-        );
-        summary.push((repo.clone(), report.grade, report.composite, findings.len()));
+        let gchar = if report.status == score::ScoreStatus::Scored {
+            eprintln!(
+                "grade {} ({})  ·  {}  ·  {} finding(s)",
+                report.grade,
+                report.composite,
+                model_summary(&model),
+                findings.len()
+            );
+            report.grade
+        } else {
+            eprintln!("NOT GRADED (no tools resolved)  ·  {}", model_summary(&model));
+            '?'
+        };
+        summary.push((repo.clone(), gchar, report.composite, findings.len()));
         servers.push(report.to_json(repo, url, &commit));
 
         if !keep {
@@ -178,17 +184,22 @@ fn main() {
 
     // Grade distribution + summary table.
     eprintln!("\n=== summary ({} scored, {} failed) ===", summary.len(), failures.len());
-    for g in ['A', 'B', 'C', 'D', 'F'] {
+    for g in ['A', 'B', 'C', 'D', 'F', '?'] {
         let n = summary.iter().filter(|s| s.1 == g).count();
         if n > 0 {
-            eprint!("{g}:{n}  ");
+            let label = if g == '?' { "not-graded".to_string() } else { g.to_string() };
+            eprint!("{label}:{n}  ");
         }
     }
     eprintln!("\n");
     let mut sorted = summary.clone();
     sorted.sort_by(|a, b| (b.1 as u8).cmp(&(a.1 as u8)).then(a.0.cmp(&b.0))); // worst grade first
     for (repo, grade, composite, n) in &sorted {
-        eprintln!("  {grade}  {composite:>3}  {n:>2} finding(s)  {repo}");
+        if *grade == '?' {
+            eprintln!("  ?    —                {repo}  (insufficient coverage)");
+        } else {
+            eprintln!("  {grade}  {composite:>3}  {n:>2} finding(s)  {repo}");
+        }
     }
     if !failures.is_empty() {
         eprintln!("\nfailed to clone: {}", failures.join(", "));

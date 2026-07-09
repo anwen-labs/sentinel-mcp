@@ -398,7 +398,7 @@ mod tests {
         let mut f = engine::run_pack(&pack, m);
         engine::attach_lines(&mut f, m);
         let (f, mods) = context::apply(f, m);
-        score::score(&f, &mods, &Dim::all())
+        score::score(&f, &mods, &Dim::all(), true)
     }
 
     // il-eli-mcp-shaped: stdio, read-only, keyless, unpinned deps + unbounded limit.

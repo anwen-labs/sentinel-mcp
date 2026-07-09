@@ -75,7 +75,7 @@ fn main() {
     let mut findings = engine::run_pack(&pack, &model);
     engine::attach_lines(&mut findings, &model);
     let (findings, mods) = context::apply(findings, &model);
-    let report = score::score(&findings, &mods, &Dim::all());
+    let report = score::score(&findings, &mods, &Dim::all(), mcp_parser::analyzable(&model));
 
     let server = server.unwrap_or_else(|| {
         Path::new(&path)
@@ -98,11 +98,15 @@ fn main() {
     } else {
         format!("  ·  caps: {}", report.caps.join(", "))
     };
+    let verdict = if report.status == score::ScoreStatus::Scored {
+        format!("grade {} (composite {})", report.grade, report.composite)
+    } else {
+        "NOT GRADED — insufficient coverage (MCP server, no tools resolved)".to_string()
+    };
     eprintln!(
-        "\n{}  grade {} (composite {})  ·  {} finding(s)  ·  {} context modifier(s){}",
+        "\n{}  {}  ·  {} finding(s)  ·  {} context modifier(s){}",
         server,
-        report.grade,
-        report.composite,
+        verdict,
         findings.len(),
         report.modifiers.len(),
         caps

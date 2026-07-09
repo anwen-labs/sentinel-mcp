@@ -315,6 +315,30 @@ fn is_js_ts(p: &str) -> bool {
     [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"].iter().any(|e| b.ends_with(e))
 }
 
+/// Is this repo actually an MCP server? (an `mcp` SDK dependency, a `server.json`, or an SDK
+/// import in source). Used by the coverage gate: an MCP repo where we resolved zero tools was
+/// not really analyzed, so its grade must be withheld rather than defaulting to A.
+fn detect_mcp(files: &[RepoFile], deps: &[Dep]) -> bool {
+    if files.iter().any(|f| basename(&f.path) == "server.json") {
+        return true;
+    }
+    let mcp_dep = deps.iter().any(|d| {
+        let n = d.name.to_ascii_lowercase();
+        n == "mcp" || n == "fastmcp" || n.contains("modelcontextprotocol") || n.contains("mcp-sdk")
+    });
+    if mcp_dep {
+        return true;
+    }
+    files.iter().filter(|f| is_source(&f.path)).any(|f| {
+        let c = &f.content;
+        c.contains("modelcontextprotocol")
+            || c.contains("fastmcp")
+            || c.contains("FastMCP")
+            || c.contains("from mcp")
+            || c.contains("import mcp")
+    })
+}
+
 /// Tool inventory + source-flow taint. Python → `python::analyze`, JS/TS → `js::analyze`; other
 /// source languages contribute no tools yet. Returns the tool records and whether any module has a
 /// secret→exfil flow.
@@ -398,6 +422,7 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
         ("transport", AttrValue::Enum(transport)),
         ("has_lockfile", AttrValue::Bool(has_lockfile)),
         ("tool_count", AttrValue::Int(tools.len() as i64)),
+        ("is_mcp", AttrValue::Bool(detect_mcp(files, &deps))),
     ];
     if !langs.is_empty() {
         sattrs.push(("languages", AttrValue::List(langs.iter().map(|l| s(l)).collect())));
@@ -522,6 +547,18 @@ pub fn kind_count(m: &FactModel, kind: &str) -> usize {
         .iter()
         .filter(|e| e.attr("mcp_kind").and_then(|v| v.as_str()) == Some(kind))
         .count()
+}
+
+/// Coverage gate: false when this is an MCP server but we resolved zero tools (so the tool-driven
+/// dimensions were never really analyzed — the grade must be withheld, not defaulted to A).
+pub fn analyzable(m: &FactModel) -> bool {
+    let is_mcp = m
+        .entities
+        .iter()
+        .find(|e| e.attr("mcp_kind").and_then(|v| v.as_str()) == Some("server"))
+        .map(|e| e.attr("is_mcp").and_then(|v| v.as_bool()) == Some(true))
+        .unwrap_or(false);
+    !(is_mcp && kind_count(m, "tool") == 0)
 }
 
 /// One-line human summary of the parsed model (transport, tool/dep counts, languages) for CLI/debug.
