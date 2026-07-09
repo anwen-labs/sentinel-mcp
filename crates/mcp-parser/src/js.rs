@@ -191,6 +191,53 @@ fn secret_exfil(content: &str) -> bool {
     })
 }
 
+/// The quoted value immediately after a key (e.g. `name: "x"` → `x`). None if the value isn't a
+/// string literal — avoids grabbing an unrelated later quote.
+fn quoted_value(after: &str) -> Option<String> {
+    let a = after.trim_start();
+    let qc = a.chars().next()?;
+    if qc != '"' && qc != '\'' && qc != '`' {
+        return None;
+    }
+    let rest = &a[1..];
+    let end = rest.find(qc)?;
+    Some(rest[..end].to_string())
+}
+
+/// Tool NAMES from the "tools as data" / class-based shapes the `.tool()` matcher misses:
+/// `{ name: "x", inputSchema, handler }`, `name = "x"` in a `class …Tool`. Name-only (coverage);
+/// taint for these shapes is a later slice. Precise: quoted value + a tool-ish neighbor within
+/// a window, and `name` matched as a whole word (not `filename`).
+fn extra_tool_names(content: &str) -> Vec<String> {
+    const INDICATORS: &[&str] = &[
+        "inputSchema", "input_schema", "outputSchema", "description", "handler", "execute",
+        "parameters", "annotations",
+    ];
+    let bytes = content.as_bytes();
+    let mut out = Vec::new();
+    for pat in ["name:", "name =", "name="] {
+        let mut from = 0;
+        while let Some(rel) = content[from..].find(pat) {
+            let pos = from + rel;
+            from = pos + pat.len();
+            if pos > 0 && is_ident(bytes[pos - 1] as char) {
+                continue; // part of a longer identifier (e.g. `filename:`)
+            }
+            let after = &content[pos + pat.len()..(pos + pat.len() + 96).min(content.len())];
+            let nm = match quoted_value(after) {
+                Some(n) if !n.is_empty() && n.len() <= 64 => n,
+                _ => continue,
+            };
+            let ws = pos.saturating_sub(400);
+            let we = (pos + 400).min(content.len());
+            if INDICATORS.iter().any(|k| content[ws..we].contains(k)) {
+                out.push(nm);
+            }
+        }
+    }
+    out
+}
+
 pub fn analyze(content: &str) -> Analysis {
     let positions = marker_positions(content);
     let mut tools: Vec<ToolTaint> = Vec::new();
@@ -227,6 +274,14 @@ pub fn analyze(content: &str) -> Analysis {
             }
         }
         tools.push(t);
+    }
+
+    // Broaden coverage: name-only tools from data/class shapes the marker scan missed.
+    let mut seen: std::collections::BTreeSet<String> = tools.iter().map(|t| t.name.clone()).collect();
+    for nm in extra_tool_names(content) {
+        if seen.insert(nm.clone()) {
+            tools.push(ToolTaint::new(nm, Vec::new()));
+        }
     }
 
     Analysis {
