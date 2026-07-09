@@ -171,6 +171,7 @@ name = "sentinel-mcp-cli"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "fact-model",
  "mcp-parser",
  "pack-mcp-core",
 ]

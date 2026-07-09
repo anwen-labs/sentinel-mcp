@@ -9,8 +9,17 @@ use crate::taint::{
     EXFIL_HOSTS, SECRET_WORDS,
 };
 
-const TOOL_DECORATORS: &[&str] =
-    &["@mcp.tool", "@app.tool", "@server.tool", "@tool", "@mcp.resource"];
+/// A tool/resource/prompt decorator on any FastMCP-style instance: `@mcp.tool()`, `@self.tool`,
+/// `@server.tool(...)`, `@app.resource(...)`, bare `@tool`, etc. (instance name varies widely).
+fn is_tool_decorator(t: &str) -> bool {
+    t.starts_with('@')
+        && (t.contains(".tool(")
+            || t.ends_with(".tool")
+            || t == "@tool"
+            || t.starts_with("@tool(")
+            || t.contains(".resource(")
+            || t.contains(".prompt("))
+}
 const LIMIT_NAMES: &[&str] =
     &["limit", "max", "top", "count", "size", "rows", "page_size", "offset", "length", "n"];
 const SHELL: &[&str] = &[
@@ -91,7 +100,7 @@ fn tool_functions(lines: &[&str]) -> Vec<(usize, String, Vec<String>)> {
     let mut i = 0;
     while i < lines.len() {
         let t = lines[i].trim_start();
-        if TOOL_DECORATORS.iter().any(|d| t.starts_with(d)) {
+        if is_tool_decorator(t) {
             let hi = (i + 6).min(lines.len());
             if let Some(defi) = (i + 1..hi).find(|&j| {
                 let tt = lines[j].trim_start();
