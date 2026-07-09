@@ -25,7 +25,7 @@ MCP servers, a different job from config scanning, so it lives in its own repo.
 ## Layout
 ```
 crates/pack-mcp-core   # rules + context modifiers + scoring + scores.json
-crates/mcp-parser      # MCP repo -> FactModel (structural pass done; source-flow AST pass in progress)
+crates/mcp-parser      # MCP repo -> FactModel: structural facts + same-file source-flow taint
 ```
 
 ## Build / test
@@ -47,6 +47,48 @@ A first scorecard of the top MCP servers (ranked by install/download proxy) is p
 Of the top 35, 26 could be statically graded (25 A, 1 B); the rest are withheld with a reason. The
 single B is `microsoft/markitdown`, whose `convert_to_markdown(uri)` fetches an arbitrary URI in
 process — the SSRF that was publicly disclosed against it — flagged deterministically at a named line.
+
+## How to read a score
+Each server in [`results/scores.json`](results/scores.json) is one object. Here is the real
+(trimmed, annotated) entry for `microsoft/markitdown`:
+
+```jsonc
+{
+  "server": "microsoft/markitdown",
+  "commit": "e144e0a...",                      // the exact commit scored — the determinism anchor
+  "status": "scored",                          // "scored" | "insufficient_coverage" (withheld)
+  "grade": "B",                                // A–F, the headline
+  "composite": 94,                             // 0–100 weighted average across the five dimensions
+  "grade_caps_applied": ["high-unresolved:cap-B"],  // why the letter can sit below the band
+  "context_modifiers": [],                     // deterministic severity downgrades for reachability
+  "dimensions": [
+    { "id": "network-egress-ssrf", "weight": 20, "sub_score": 75, "findings": [
+        { "rule": "MCP-SSRF-USER-CONTROLLED-URL", "severity": "High",
+          "evidence": { "file": "packages/markitdown-mcp/src/markitdown_mcp/__main__.py", "line": 21 } } ] },
+    { "id": "supply-chain-provenance", "weight": 15, "sub_score": 90, "findings": [
+        { "rule": "MCP-DEPS-UNPINNED", "severity": "Medium",
+          "evidence": { "file": "packages/markitdown-mcp/pyproject.toml", "line": 26 } } ] }
+    // the other three dimensions scored 100 with no findings
+  ]
+}
+```
+
+- **Grade (A–F) is the headline;** `composite` is the 0–100 weighted average across the five
+  [dimensions](docs/METHODOLOGY.md). Bands: 90–100 **A**, 80–89 **B**, 70–79 **C**, 60–69 **D**, 0–59 **F**.
+- **Grade caps can pull the letter below the band.** markitdown computes to 94 (an A band) but carries
+  a **High** finding, and any unresolved High caps the grade at **B** — a "Grade A" listed next to a
+  High finding would be incoherent. (A Critical caps at F; an unmitigated shell-exec surface at D.)
+- **Every finding cites `file:line`.** Here `convert_to_markdown(uri)` fetches an arbitrary URI in
+  process (SSRF) at `__main__.py:21` — open the file at that commit and you see exactly what the
+  scanner saw. *Provable, not promised.*
+- **`context_modifiers`** lists each deterministic severity downgrade — e.g. a stdio (local) server's
+  network findings are downgraded because there is no remote attacker — so the grade is nuanced yet
+  reproducible.
+- **`status: "insufficient_coverage"`** means the tool surface could not be analyzed at that commit,
+  so the grade is **withheld** rather than defaulted to A. It is "not yet gradeable," not a failing
+  grade — see the withheld list in [`FINDINGS.md`](FINDINGS.md) for why.
+- **Reproduce it:** clone the repo at `commit`, run the scanner, and you get the same grade and the
+  same evidence pointers.
 
 ## Status
 v0.1. Structural scoring **and** the source-flow taint pass run end-to-end today: SSRF (including
