@@ -209,18 +209,150 @@ fn is_distinctive(p: &str) -> bool {
     p.len() >= 5 && !GENERIC_PARAMS.contains(&p)
 }
 
+/// Accumulate a (possibly multi-line) `def ...(...)` signature starting at `defi`; returns the
+/// joined signature and the index just past it.
+fn accumulate_sig(lines: &[&str], defi: usize) -> (String, usize) {
+    let mut sig = String::new();
+    let mut depth = 0i32;
+    let mut started = false;
+    let mut j = defi;
+    while j < lines.len() && j <= defi + 40 {
+        for ch in lines[j].chars() {
+            if ch == '(' {
+                depth += 1;
+                started = true;
+            } else if ch == ')' {
+                depth -= 1;
+            }
+        }
+        sig.push_str(lines[j]);
+        sig.push(' ');
+        j += 1;
+        if started && depth <= 0 {
+            break;
+        }
+    }
+    (sig, j)
+}
+
+/// Repo-wide map of `def name` → its params, so a method-call registration that passes a function
+/// reference (`self.tool(find_foo, name=…)`) can be resolved to real params.
+fn function_index(files: &[(&str, &str)]) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut idx = std::collections::BTreeMap::new();
+    for (_, content) in files {
+        let lines: Vec<&str> = content.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let t = lines[i].trim_start();
+            if t.starts_with("def ") || t.starts_with("async def ") {
+                let (sig, next) = accumulate_sig(&lines, i);
+                let name = def_name(&sig);
+                if !name.is_empty() {
+                    idx.entry(name).or_insert_with(|| def_params(&sig));
+                }
+                i = next;
+                continue;
+            }
+            i += 1;
+        }
+    }
+    idx
+}
+
+/// Text between the matching parens starting at byte index `lparen` (the `(`).
+fn capture_call(s: &str, lparen: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut i = lparen;
+    let start = lparen + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return s.get(start..i).unwrap_or("").to_string();
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    s.get(start..).unwrap_or("").to_string()
+}
+
+/// Method-call tool registrations: `<instance>.tool(fn, name="…")`, `.add_tool(…)`,
+/// `.register_tool(…)` — the FastMCP-2 / builder style (qdrant etc.). Returns (name, params, file);
+/// params resolved from the function index when a positional function reference is passed.
+fn method_call_tools(
+    files: &[(&str, &str)],
+    idx: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Vec<(String, Vec<String>, String)> {
+    const MARKERS: &[&str] = &[".tool(", ".add_tool(", ".register_tool("];
+    let mut out = Vec::new();
+    for (path, content) in files {
+        for marker in MARKERS {
+            let mut from = 0;
+            while let Some(rel) = content[from..].find(marker) {
+                let mpos = from + rel;
+                from = mpos + marker.len();
+                // skip decorator lines (`@mcp.tool(`) — handled by tool_functions
+                let ls = content[..mpos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                if content[ls..mpos].trim_start().starts_with('@') {
+                    continue;
+                }
+                let lparen = mpos + marker.len() - 1;
+                let inner = capture_call(content, lparen);
+                let mut name = String::new();
+                let mut params: Vec<String> = Vec::new();
+                for a in split_top_level(&inner) {
+                    let at = a.trim();
+                    if let Some(v) = at.strip_prefix("name=").or_else(|| at.strip_prefix("name =")) {
+                        name = v.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+                    } else if !at.contains('=') {
+                        if at.starts_with('"') || at.starts_with('\'') {
+                            if name.is_empty() {
+                                name = at.trim_matches(|c| c == '"' || c == '\'').to_string();
+                            }
+                        } else {
+                            let ident: String = at.chars().take_while(|c| is_ident(*c)).collect();
+                            if params.is_empty() {
+                                if let Some(p) = idx.get(&ident) {
+                                    params = p.clone();
+                                    if name.is_empty() {
+                                        name = ident.clone();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !name.is_empty() {
+                    out.push((name, params, path.to_string()));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Repo-wide analysis: discover tools across all Python files, then scan ALL files' lines for
 /// sinks referencing a tool's params. The cross-file hop — a sink in a helper module (e.g.
 /// il-eli's `str.contains(court)` in case_law.py) is linked to the tool that owns `court` in
 /// server.py. Within a tool's own file, any param matches; across files, only *distinctive*
 /// params do (precision guard). Name-based reachability, not a call graph.
 pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
+    let idx = function_index(files);
     let mut tools: Vec<ToolTaint> = Vec::new();
+    let mut names_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut all_lines: Vec<(String, String)> = Vec::new(); // (line, file path)
     let mut all_content = String::new();
     for (path, content) in files {
         let lines: Vec<&str> = content.lines().collect();
         for (defi, name, params) in tool_functions(&lines) {
+            if name.is_empty() || !names_seen.insert(name.clone()) {
+                continue;
+            }
             let hi = (defi + 15).min(lines.len());
             let mut t = ToolTaint::new(name, params);
             t.file = (*path).to_string();
@@ -232,6 +364,15 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
         }
         all_content.push_str(content);
         all_content.push('\n');
+    }
+    // Method-call registrations (qdrant-style), resolved via the function index.
+    for (name, params, file) in method_call_tools(files, &idx) {
+        if name.is_empty() || !names_seen.insert(name.clone()) {
+            continue;
+        }
+        let mut t = ToolTaint::new(name, params);
+        t.file = file;
+        tools.push(t);
     }
 
     for t in tools.iter_mut() {
