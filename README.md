@@ -35,9 +35,24 @@ The Sentinel engine is a **pinned git dependency** on `anwen-labs/sentinel`, so 
 reproduces byte-for-byte. Open rules + pinned commits + per-finding evidence are the point: you can
 re-run any published score and get the same grade.
 
+## Findings
+A first scorecard of the top MCP servers (ranked by install/download proxy) is published in
+[`FINDINGS.md`](FINDINGS.md), with the machine-readable data under [`results/`](results/):
+- [`results/registry.json`](results/registry.json) — graded servers plus the ones we **withhold**,
+  each with a specific reason (we don't publish a grade we can't back with evidence).
+- [`results/scores.json`](results/scores.json) — raw per-server output at pinned commits, with
+  per-finding `file:line` evidence — the reproducibility anchor.
+
+Of the top 35, 26 could be statically graded (25 A, 1 B); the rest are withheld with a reason. The
+single B is `microsoft/markitdown`, whose `convert_to_markdown(uri)` fetches an arbitrary URI in
+process — the SSRF that was publicly disclosed against it — flagged deterministically at a named line.
+
 ## Status
-Scaffold. Structural scoring (provenance / transport / dependency pinning) runs end-to-end today;
-the source-flow AST pass (SSRF / shell-exec / credential-exfiltration taint) is in progress.
+v0.1. Structural scoring **and** the source-flow taint pass run end-to-end today: SSRF (including
+wrapped local fetches), shell-exec, filesystem-traversal, and credential-exfiltration, with per-tool
+scoping and URL/path validation guards. Taint is same-file; cross-file / inter-procedural analysis,
+Go tool-level taint, and class/registry tool shapes are on the roadmap (see the withheld list in
+`FINDINGS.md` for exactly what isn't yet covered).
 
 ## License
 MIT.
