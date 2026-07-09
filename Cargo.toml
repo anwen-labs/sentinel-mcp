@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/pack-mcp-core",
     "crates/mcp-parser",
+    "crates/cli",
 ]
 
 [workspace.package]

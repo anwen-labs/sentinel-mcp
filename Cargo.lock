@@ -167,6 +167,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentinel-mcp-cli"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "mcp-parser",
+ "pack-mcp-core",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
