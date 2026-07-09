@@ -37,6 +37,9 @@ pub const MCP_NETWORK_RULES: &[&str] = &[
     "MCP-SSRF-USER-CONTROLLED-URL",
     "MCP-UNRESTRICTED-EGRESS",
     "MCP-TLS-VERIFICATION-DISABLED",
+    "MCP-BIND-NO-AUTH",
+    "MCP-BIND-ALL-INTERFACES",
+    "MCP-CORS-WILDCARD",
 ];
 
 // --- fact accessors --------------------------------------------------------
@@ -283,6 +286,44 @@ fn r_deps_unpinned(m: &FactModel) -> Vec<Finding> {
 }
 
 // --- catalog ---------------------------------------------------------------
+// =========================== D4 — HTTP-transport exposure ==================
+fn r_bind_no_auth(m: &FactModel) -> Vec<Finding> {
+    match server_entity(m) {
+        Some(s) if flag(s, "binds_all_interfaces") && !flag(s, "has_auth") => vec![finding(
+            "MCP-BIND-NO-AUTH",
+            Severity::High,
+            vec![s.id.clone()],
+            "Server binds all interfaces (0.0.0.0) with no detectable inbound authentication — an internet-reachable, unauthenticated MCP endpoint".into(),
+            "Bind to 127.0.0.1 for local use, or require authentication (token/OAuth) before listening on 0.0.0.0.",
+        )],
+        _ => Vec::new(),
+    }
+}
+fn r_bind_all(m: &FactModel) -> Vec<Finding> {
+    match server_entity(m) {
+        Some(s) if flag(s, "binds_all_interfaces") && flag(s, "has_auth") => vec![finding(
+            "MCP-BIND-ALL-INTERFACES",
+            Severity::Medium,
+            vec![s.id.clone()],
+            "Server binds all interfaces (0.0.0.0) — reachable from any network interface".into(),
+            "Bind to a specific interface (127.0.0.1) unless external exposure is intended and hardened.",
+        )],
+        _ => Vec::new(),
+    }
+}
+fn r_cors_wildcard(m: &FactModel) -> Vec<Finding> {
+    match server_entity(m) {
+        Some(s) if flag(s, "cors_wildcard") => vec![finding(
+            "MCP-CORS-WILDCARD",
+            Severity::Medium,
+            vec![s.id.clone()],
+            "CORS allows any origin (*) — a browser on any site can call this server".into(),
+            "Restrict CORS to an explicit allowlist of trusted origins; never pair wildcard origin with credentials.",
+        )],
+        _ => Vec::new(),
+    }
+}
+
 /// Static catalog: id → metadata (controls = CWE + OWASP MCP Top-10 + MAESTRO + ETDI).
 pub fn catalog() -> Vec<engine::RuleMeta> {
     use engine::RuleMeta;
@@ -302,6 +343,9 @@ pub fn catalog() -> Vec<engine::RuleMeta> {
         RuleMeta { id: "MCP-INPUT-UNVALIDATED", title: "Missing input validation", target: t, severity: Medium, controls: &["CWE-20", "CWE-1284", "OWASP-MCP-A5", "MAESTRO-L3"], summary: "An unbounded numeric param or input-as-regex enables resource exhaustion / ReDoS.", fix: "Bound params; cap lengths; regex=False unless intended.", strict: false },
         RuleMeta { id: "MCP-DOS-UNBOUNDED", title: "No timeout/size bound (DoS)", target: t, severity: Low, controls: &["CWE-400", "CWE-770", "OWASP-MCP-A5", "MAESTRO-L6"], summary: "A tool operation has no timeout/size/concurrency bound.", fix: "Add timeouts and size/concurrency limits.", strict: false },
         RuleMeta { id: "MCP-DEPS-UNPINNED", title: "Unpinned dependencies / supply chain", target: t, severity: Medium, controls: &["CWE-1104", "CWE-829", "OWASP-MCP-A6", "MAESTRO-L3", "MCP-Spec-supply-chain"], summary: "No committed lockfile and/or floating ranges — installs are not reproducible.", fix: "Commit a lockfile; pin ranges and GitHub Actions to SHAs.", strict: false },
+        RuleMeta { id: "MCP-BIND-NO-AUTH", title: "Binds 0.0.0.0 without auth", target: t, severity: High, controls: &["CWE-668", "CWE-306", "OWASP-MCP-A6", "MAESTRO-L4"], summary: "Server binds all interfaces (0.0.0.0) with no detectable inbound authentication — internet-reachable and unauthenticated.", fix: "Bind to 127.0.0.1, or require authentication before listening on 0.0.0.0.", strict: false },
+        RuleMeta { id: "MCP-BIND-ALL-INTERFACES", title: "Binds all interfaces (0.0.0.0)", target: t, severity: Medium, controls: &["CWE-668", "OWASP-MCP-A6", "MAESTRO-L4"], summary: "Server binds all interfaces — reachable from any network interface.", fix: "Bind to a specific interface unless external exposure is intended and hardened.", strict: false },
+        RuleMeta { id: "MCP-CORS-WILDCARD", title: "CORS wildcard origin", target: t, severity: Medium, controls: &["CWE-942", "CWE-346", "OWASP-MCP-A4", "MAESTRO-L6"], summary: "CORS allows any origin (*) — any website can call the server.", fix: "Restrict CORS to a trusted-origin allowlist; never pair wildcard with credentials.", strict: false },
     ]
 }
 
@@ -325,6 +369,9 @@ impl McpCorePack {
             Box::new(FnRule { id: "MCP-INPUT-UNVALIDATED", f: r_input_unvalidated }),
             Box::new(FnRule { id: "MCP-DOS-UNBOUNDED", f: r_dos_unbounded }),
             Box::new(FnRule { id: "MCP-DEPS-UNPINNED", f: r_deps_unpinned }),
+            Box::new(FnRule { id: "MCP-BIND-NO-AUTH", f: r_bind_no_auth }),
+            Box::new(FnRule { id: "MCP-BIND-ALL-INTERFACES", f: r_bind_all }),
+            Box::new(FnRule { id: "MCP-CORS-WILDCARD", f: r_cors_wildcard }),
         ];
         Self { rules }
     }

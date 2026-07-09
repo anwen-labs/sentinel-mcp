@@ -440,6 +440,10 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
         ("tool_count", AttrValue::Int(tools.len() as i64)),
         ("is_mcp", AttrValue::Bool(detect_mcp(files, &deps))),
     ];
+    let (binds_all, has_auth, cors_wild) = http_exposure(files);
+    sattrs.push(("binds_all_interfaces", AttrValue::Bool(binds_all)));
+    sattrs.push(("has_auth", AttrValue::Bool(has_auth)));
+    sattrs.push(("cors_wildcard", AttrValue::Bool(cors_wild)));
     if !langs.is_empty() {
         sattrs.push(("languages", AttrValue::List(langs.iter().map(|l| s(l)).collect())));
     }
@@ -563,6 +567,40 @@ pub fn kind_count(m: &FactModel, kind: &str) -> usize {
         .iter()
         .filter(|e| e.attr("mcp_kind").and_then(|v| v.as_str()) == Some(kind))
         .count()
+}
+
+/// Inbound-auth indicators (specific to *checking* auth, not just sending an Authorization header
+/// on outbound calls — biased to avoid false "no-auth" flags).
+const AUTH_INDICATORS: &[&str] = &[
+    "requireAuth", "verifyToken", "ensureAuth", "auth_required", "authenticate(", "OAuth", "oauth",
+    "passport", "express-jwt", "verifyJwt", "verifyJWT", "checkAuth", "bearerAuth",
+    "WWW-Authenticate", "AuthMiddleware", "auth_middleware", "verify_token", "get_current_user",
+    "HTTPBearer", "OAuth2", "login_required", "requireAuthentication",
+];
+
+/// Deployment-exposure signals scanned across source: binds all interfaces (0.0.0.0), any inbound
+/// auth check present, CORS wildcard. Feed the HTTP-transport rules.
+fn http_exposure(files: &[RepoFile]) -> (bool, bool, bool) {
+    let mut binds_all = false;
+    let mut has_auth = false;
+    let mut cors_wild = false;
+    for f in files.iter().filter(|f| is_source(&f.path)) {
+        let c = &f.content;
+        if c.contains("0.0.0.0") {
+            binds_all = true;
+        }
+        if AUTH_INDICATORS.iter().any(|k| c.contains(k)) {
+            has_auth = true;
+        }
+        if c.contains("allow_origins=[\"*\"]")
+            || c.contains("origin: \"*\"")
+            || c.contains("origin: '*'")
+            || (c.contains("Access-Control-Allow-Origin") && c.contains('*'))
+        {
+            cors_wild = true;
+        }
+    }
+    (binds_all, has_auth, cors_wild)
 }
 
 /// Coverage gate: false when this is an MCP server but we resolved zero tools (so the tool-driven

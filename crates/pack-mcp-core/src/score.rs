@@ -68,7 +68,10 @@ pub fn dimension_of(rule_id: &str) -> Dim {
         | "MCP-INSECURE-DESERIALIZATION"
         | "MCP-INPUT-UNVALIDATED"
         | "MCP-SCOPE-OVERREACH"
-        | "MCP-DOS-UNBOUNDED" => Dim::D4Permission,
+        | "MCP-DOS-UNBOUNDED"
+        | "MCP-BIND-NO-AUTH"
+        | "MCP-BIND-ALL-INTERFACES"
+        | "MCP-CORS-WILDCARD" => Dim::D4Permission,
         "MCP-DEPS-UNPINNED" | "MCP-RELEASE-UNSIGNED" | "MCP-MAINTAINER-SIGNAL" => Dim::D5Provenance,
         // Unknown rule ids default to permission-scope (safest bucket) — a real engine asserts here.
         _ => Dim::D4Permission,
