@@ -70,6 +70,7 @@ fn main() {
     }
 
     let model = parse_repo(&files);
+    eprintln!("{}", mcp_parser::model_summary(&model));
     let pack = McpCorePack::new();
     let mut findings = engine::run_pack(&pack, &model);
     engine::attach_lines(&mut findings, &model);

