@@ -1,7 +1,7 @@
 {
   "ruleset_version": "pack-mcp-core@0.1.0",
-  "graded_count": 26,
-  "pending_count": 9,
+  "graded_count": 28,
+  "pending_count": 7,
   "graded": [
     {
       "commit": "f1a4d04e4f91c4d3e2b7c63d5283f3f4338fd2e5",
@@ -196,6 +196,54 @@
       "status": "scored"
     },
     {
+      "commit": "9f0396a1b367dfa6a424f4686a21701c8f05b1c3",
+      "composite": 100,
+      "context_modifiers": [],
+      "dimensions": [
+        {
+          "findings": [],
+          "id": "tool-description-injection",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "credential-secret-handling",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "network-egress-ssrf",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "permission-scope-vs-declared",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 25
+        },
+        {
+          "findings": [],
+          "id": "supply-chain-provenance",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 15
+        }
+      ],
+      "grade": "A",
+      "grade_caps_applied": [],
+      "repo_url": "https://github.com/supabase-community/supabase-mcp",
+      "ruleset_version": "pack-mcp-core@0.1.0",
+      "server": "supabase-community/supabase-mcp",
+      "status": "scored"
+    },
+    {
       "commit": "8c02eedf0fbfe9fe5fb87fb8f6e9fbd3aec157ff",
       "composite": 100,
       "context_modifiers": [],
@@ -292,6 +340,102 @@
       "status": "scored"
     },
     {
+      "commit": "0807a15fd5c670b9b58c2d5e5433818f2845d95c",
+      "composite": 100,
+      "context_modifiers": [],
+      "dimensions": [
+        {
+          "findings": [],
+          "id": "tool-description-injection",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "credential-secret-handling",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "network-egress-ssrf",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "permission-scope-vs-declared",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 25
+        },
+        {
+          "findings": [],
+          "id": "supply-chain-provenance",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 15
+        }
+      ],
+      "grade": "A",
+      "grade_caps_applied": [],
+      "repo_url": "https://github.com/pydantic/pydantic-ai",
+      "ruleset_version": "pack-mcp-core@0.1.0",
+      "server": "pydantic/pydantic-ai",
+      "status": "scored"
+    },
+    {
+      "commit": "ca4622b7188c24058419091f65321193528e7eb7",
+      "composite": 100,
+      "context_modifiers": [],
+      "dimensions": [
+        {
+          "findings": [],
+          "id": "tool-description-injection",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "credential-secret-handling",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "network-egress-ssrf",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "permission-scope-vs-declared",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 25
+        },
+        {
+          "findings": [],
+          "id": "supply-chain-provenance",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 15
+        }
+      ],
+      "grade": "A",
+      "grade_caps_applied": [],
+      "repo_url": "https://github.com/apify/actors-mcp-server",
+      "ruleset_version": "pack-mcp-core@0.1.0",
+      "server": "apify/actors-mcp-server",
+      "status": "scored"
+    },
+    {
       "commit": "dba87432cacaa7a5af1326d72e37e2d770628a0b",
       "composite": 100,
       "context_modifiers": [],
@@ -340,6 +484,54 @@
       "status": "scored"
     },
     {
+      "commit": "f7a89cb51e411798e1efb4b2d8d1afd8ba230930",
+      "composite": 100,
+      "context_modifiers": [],
+      "dimensions": [
+        {
+          "findings": [],
+          "id": "tool-description-injection",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "credential-secret-handling",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "network-egress-ssrf",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "permission-scope-vs-declared",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 25
+        },
+        {
+          "findings": [],
+          "id": "supply-chain-provenance",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 15
+        }
+      ],
+      "grade": "A",
+      "grade_caps_applied": [],
+      "repo_url": "https://github.com/grafana/mcp-grafana",
+      "ruleset_version": "pack-mcp-core@0.1.0",
+      "server": "grafana/mcp-grafana",
+      "status": "scored"
+    },
+    {
       "commit": "52c633e37684fadb94ae236f74909b9bbefc0db8",
       "composite": 100,
       "context_modifiers": [],
@@ -385,6 +577,54 @@
       "repo_url": "https://github.com/cloudflare/mcp-server-cloudflare",
       "ruleset_version": "pack-mcp-core@0.1.0",
       "server": "cloudflare/mcp-server-cloudflare",
+      "status": "scored"
+    },
+    {
+      "commit": "7c8993499c808e5b3c11b8c16736687ecef0f457",
+      "composite": 100,
+      "context_modifiers": [],
+      "dimensions": [
+        {
+          "findings": [],
+          "id": "tool-description-injection",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "credential-secret-handling",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "network-egress-ssrf",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "permission-scope-vs-declared",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 25
+        },
+        {
+          "findings": [],
+          "id": "supply-chain-provenance",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 15
+        }
+      ],
+      "grade": "A",
+      "grade_caps_applied": [],
+      "repo_url": "https://github.com/ppl-ai/modelcontextprotocol",
+      "ruleset_version": "pack-mcp-core@0.1.0",
+      "server": "ppl-ai/modelcontextprotocol",
       "status": "scored"
     },
     {
@@ -768,10 +1008,10 @@
                 "entities": [
                   "site:cors-wildcard"
                 ],
-                "file": "packages/mcp-cloudflare/src/server/index.test.ts",
-                "line": 104,
+                "file": "packages/mcp-cloudflare/src/server/utils/cors.ts",
+                "line": 49,
                 "lines": [
-                  104
+                  49
                 ]
               },
               "rule": "MCP-CORS-WILDCARD",
@@ -796,69 +1036,6 @@
       "repo_url": "https://github.com/getsentry/sentry-mcp",
       "ruleset_version": "pack-mcp-core@0.1.0",
       "server": "getsentry/sentry-mcp",
-      "status": "scored"
-    },
-    {
-      "commit": "9f0396a1b367dfa6a424f4686a21701c8f05b1c3",
-      "composite": 98,
-      "context_modifiers": [],
-      "dimensions": [
-        {
-          "findings": [],
-          "id": "tool-description-injection",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "credential-secret-handling",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "network-egress-ssrf",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [
-            {
-              "evidence": {
-                "entities": [
-                  "site:bind-all-interfaces"
-                ],
-                "file": "packages/mcp-server-postgrest/src/server.test.ts",
-                "line": 157,
-                "lines": [
-                  157
-                ]
-              },
-              "rule": "MCP-BIND-ALL-INTERFACES",
-              "severity": "Medium"
-            }
-          ],
-          "id": "permission-scope-vs-declared",
-          "status": "scored",
-          "sub_score": 90,
-          "weight": 25
-        },
-        {
-          "findings": [],
-          "id": "supply-chain-provenance",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 15
-        }
-      ],
-      "grade": "A",
-      "grade_caps_applied": [],
-      "repo_url": "https://github.com/supabase-community/supabase-mcp",
-      "ruleset_version": "pack-mcp-core@0.1.0",
-      "server": "supabase-community/supabase-mcp",
       "status": "scored"
     },
     {
@@ -985,132 +1162,6 @@
       "repo_url": "https://github.com/exa-labs/exa-mcp-server",
       "ruleset_version": "pack-mcp-core@0.1.0",
       "server": "exa-labs/exa-mcp-server",
-      "status": "scored"
-    },
-    {
-      "commit": "0807a15fd5c670b9b58c2d5e5433818f2845d95c",
-      "composite": 98,
-      "context_modifiers": [],
-      "dimensions": [
-        {
-          "findings": [],
-          "id": "tool-description-injection",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "credential-secret-handling",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "network-egress-ssrf",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [
-            {
-              "evidence": {
-                "entities": [
-                  "site:bind-all-interfaces"
-                ],
-                "file": "pydantic_ai_slim/pydantic_ai/_ssrf.py",
-                "line": 27,
-                "lines": [
-                  27
-                ]
-              },
-              "rule": "MCP-BIND-ALL-INTERFACES",
-              "severity": "Medium"
-            }
-          ],
-          "id": "permission-scope-vs-declared",
-          "status": "scored",
-          "sub_score": 90,
-          "weight": 25
-        },
-        {
-          "findings": [],
-          "id": "supply-chain-provenance",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 15
-        }
-      ],
-      "grade": "A",
-      "grade_caps_applied": [],
-      "repo_url": "https://github.com/pydantic/pydantic-ai",
-      "ruleset_version": "pack-mcp-core@0.1.0",
-      "server": "pydantic/pydantic-ai",
-      "status": "scored"
-    },
-    {
-      "commit": "ca4622b7188c24058419091f65321193528e7eb7",
-      "composite": 98,
-      "context_modifiers": [],
-      "dimensions": [
-        {
-          "findings": [],
-          "id": "tool-description-injection",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "credential-secret-handling",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "network-egress-ssrf",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [
-            {
-              "evidence": {
-                "entities": [
-                  "site:cors-wildcard"
-                ],
-                "file": "src/resources/widgets.ts",
-                "line": 89,
-                "lines": [
-                  89
-                ]
-              },
-              "rule": "MCP-CORS-WILDCARD",
-              "severity": "Medium"
-            }
-          ],
-          "id": "permission-scope-vs-declared",
-          "status": "scored",
-          "sub_score": 90,
-          "weight": 25
-        },
-        {
-          "findings": [],
-          "id": "supply-chain-provenance",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 15
-        }
-      ],
-      "grade": "A",
-      "grade_caps_applied": [],
-      "repo_url": "https://github.com/apify/actors-mcp-server",
-      "ruleset_version": "pack-mcp-core@0.1.0",
-      "server": "apify/actors-mcp-server",
       "status": "scored"
     },
     {
@@ -1247,159 +1298,6 @@
       "status": "scored"
     },
     {
-      "commit": "77c5c5108b5f03b7406f662ea7d9a598612780a2",
-      "composite": 98,
-      "context_modifiers": [],
-      "dimensions": [
-        {
-          "findings": [],
-          "id": "tool-description-injection",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "credential-secret-handling",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "network-egress-ssrf",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [
-            {
-              "evidence": {
-                "entities": [
-                  "site:bind-all-interfaces"
-                ],
-                "file": "src/amazon-bedrock-agentcore-mcp-server/awslabs/amazon_bedrock_agentcore_mcp_server/tools/runtime/guide.py",
-                "line": 102,
-                "lines": [
-                  102
-                ]
-              },
-              "rule": "MCP-BIND-ALL-INTERFACES",
-              "severity": "Medium"
-            }
-          ],
-          "id": "permission-scope-vs-declared",
-          "status": "scored",
-          "sub_score": 90,
-          "weight": 25
-        },
-        {
-          "findings": [],
-          "id": "supply-chain-provenance",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 15
-        }
-      ],
-      "grade": "A",
-      "grade_caps_applied": [],
-      "repo_url": "https://github.com/awslabs/mcp",
-      "ruleset_version": "pack-mcp-core@0.1.0",
-      "server": "awslabs/mcp",
-      "status": "scored"
-    },
-    {
-      "commit": "7c8993499c808e5b3c11b8c16736687ecef0f457",
-      "composite": 97,
-      "context_modifiers": [
-        {
-          "from": "High",
-          "modifier": "transport-stdio:no-remote-attacker",
-          "rule": "MCP-BIND-NO-AUTH",
-          "to": "Medium"
-        },
-        {
-          "from": "Medium",
-          "modifier": "transport-stdio:no-remote-attacker",
-          "rule": "MCP-CORS-WILDCARD",
-          "to": "Low"
-        }
-      ],
-      "dimensions": [
-        {
-          "findings": [],
-          "id": "tool-description-injection",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "credential-secret-handling",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [],
-          "id": "network-egress-ssrf",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 20
-        },
-        {
-          "findings": [
-            {
-              "evidence": {
-                "entities": [
-                  "site:bind-all-interfaces"
-                ],
-                "file": "src/http.config.test.ts",
-                "line": 179,
-                "lines": [
-                  179
-                ]
-              },
-              "rule": "MCP-BIND-NO-AUTH",
-              "severity": "Medium"
-            },
-            {
-              "evidence": {
-                "entities": [
-                  "site:cors-wildcard"
-                ],
-                "file": "src/transport.test.ts",
-                "line": 82,
-                "lines": [
-                  82
-                ]
-              },
-              "rule": "MCP-CORS-WILDCARD",
-              "severity": "Low"
-            }
-          ],
-          "id": "permission-scope-vs-declared",
-          "status": "scored",
-          "sub_score": 86,
-          "weight": 25
-        },
-        {
-          "findings": [],
-          "id": "supply-chain-provenance",
-          "status": "scored",
-          "sub_score": 100,
-          "weight": 15
-        }
-      ],
-      "grade": "A",
-      "grade_caps_applied": [],
-      "repo_url": "https://github.com/ppl-ai/modelcontextprotocol",
-      "ruleset_version": "pack-mcp-core@0.1.0",
-      "server": "ppl-ai/modelcontextprotocol",
-      "status": "scored"
-    },
-    {
       "commit": "d4946340e6a9bb1d3cbdaa959f52d3c0292a2d28",
       "composite": 96,
       "context_modifiers": [],
@@ -1475,6 +1373,83 @@
       "repo_url": "https://github.com/sooperset/mcp-atlassian",
       "ruleset_version": "pack-mcp-core@0.1.0",
       "server": "sooperset/mcp-atlassian",
+      "status": "scored"
+    },
+    {
+      "commit": "6787f085697c09f045acbba6c02c4504a878e8a0",
+      "composite": 95,
+      "context_modifiers": [],
+      "dimensions": [
+        {
+          "findings": [],
+          "id": "tool-description-injection",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "credential-secret-handling",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "network-egress-ssrf",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [
+            {
+              "evidence": {
+                "entities": [
+                  "site:bind-all-interfaces"
+                ],
+                "file": "internal/oauth/callback.go",
+                "line": 48,
+                "lines": [
+                  48
+                ]
+              },
+              "rule": "MCP-BIND-ALL-INTERFACES",
+              "severity": "Medium"
+            },
+            {
+              "evidence": {
+                "entities": [
+                  "site:cors-wildcard"
+                ],
+                "file": "pkg/http/middleware/cors.go",
+                "line": 31,
+                "lines": [
+                  31
+                ]
+              },
+              "rule": "MCP-CORS-WILDCARD",
+              "severity": "Medium"
+            }
+          ],
+          "id": "permission-scope-vs-declared",
+          "status": "scored",
+          "sub_score": 80,
+          "weight": 25
+        },
+        {
+          "findings": [],
+          "id": "supply-chain-provenance",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 15
+        }
+      ],
+      "grade": "A",
+      "grade_caps_applied": [],
+      "repo_url": "https://github.com/github/github-mcp-server",
+      "ruleset_version": "pack-mcp-core@0.1.0",
+      "server": "github/github-mcp-server",
       "status": "scored"
     },
     {
@@ -1683,6 +1658,120 @@
       "ruleset_version": "pack-mcp-core@0.1.0",
       "server": "microsoft/markitdown",
       "status": "scored"
+    },
+    {
+      "commit": "77c5c5108b5f03b7406f662ea7d9a598612780a2",
+      "composite": 84,
+      "context_modifiers": [
+        {
+          "from": "Medium",
+          "modifier": "transport-stdio:no-remote-attacker",
+          "rule": "MCP-BIND-ALL-INTERFACES",
+          "to": "Low"
+        }
+      ],
+      "dimensions": [
+        {
+          "findings": [],
+          "id": "tool-description-injection",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "credential-secret-handling",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [],
+          "id": "network-egress-ssrf",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 20
+        },
+        {
+          "findings": [
+            {
+              "evidence": {
+                "entities": [
+                  "tool:dynamodb_data_model_validation"
+                ],
+                "file": "src/dynamodb-mcp-server/awslabs/dynamodb_mcp_server/server.py",
+                "line": 549,
+                "lines": [
+                  549
+                ]
+              },
+              "rule": "MCP-FILESYSTEM-UNSCOPED",
+              "severity": "High"
+            },
+            {
+              "evidence": {
+                "entities": [
+                  "tool:generate_resources"
+                ],
+                "file": "src/dynamodb-mcp-server/awslabs/dynamodb_mcp_server/server.py",
+                "line": 758,
+                "lines": [
+                  758
+                ]
+              },
+              "rule": "MCP-FILESYSTEM-UNSCOPED",
+              "severity": "High"
+            },
+            {
+              "evidence": {
+                "entities": [
+                  "site:bind-all-interfaces"
+                ],
+                "file": "src/amazon-bedrock-agentcore-mcp-server/awslabs/amazon_bedrock_agentcore_mcp_server/tools/runtime/guide.py",
+                "line": 102,
+                "lines": [
+                  102
+                ]
+              },
+              "rule": "MCP-BIND-ALL-INTERFACES",
+              "severity": "Low"
+            },
+            {
+              "evidence": {
+                "entities": [
+                  "tool:call_api"
+                ],
+                "file": "src/security-agent-mcp-server/awslabs/security_agent_mcp_server/server.py",
+                "line": 576,
+                "lines": [
+                  576
+                ]
+              },
+              "rule": "MCP-INPUT-UNVALIDATED",
+              "severity": "Medium"
+            }
+          ],
+          "id": "permission-scope-vs-declared",
+          "status": "scored",
+          "sub_score": 36,
+          "weight": 25
+        },
+        {
+          "findings": [],
+          "id": "supply-chain-provenance",
+          "status": "scored",
+          "sub_score": 100,
+          "weight": 15
+        }
+      ],
+      "grade": "B",
+      "grade_caps_applied": [
+        "high-unresolved:cap-B"
+      ],
+      "repo_url": "https://github.com/awslabs/mcp",
+      "ruleset_version": "pack-mcp-core@0.1.0",
+      "server": "awslabs/mcp",
+      "status": "scored"
     }
   ],
   "pending": [
@@ -1706,13 +1795,6 @@
       "commit": "bdb1a7b99b885c4e0b8be49f060554dce5fb4f76",
       "status": "coverage_pending",
       "reason": "high-privilege local agent (terminal command execution) - grading calibration in progress"
-    },
-    {
-      "server": "github/github-mcp-server",
-      "repo_url": "https://github.com/github/github-mcp-server",
-      "commit": "6787f085697c09f045acbba6c02c4504a878e8a0",
-      "status": "coverage_pending",
-      "reason": "Go tool-level source-flow analysis not yet supported (structural-only) - withheld to avoid an unearned grade"
     },
     {
       "server": "oraios/serena",
@@ -1741,13 +1823,6 @@
       "commit": "c6e78cd3907bcc9e948f53a3956bc34188fd3fd2",
       "status": "coverage_pending",
       "reason": "no analyzable MCP tool source at the pinned commit (docs/CLI repo, no source in a supported language)"
-    },
-    {
-      "server": "grafana/mcp-grafana",
-      "repo_url": "https://github.com/grafana/mcp-grafana",
-      "commit": "f7a89cb51e411798e1efb4b2d8d1afd8ba230930",
-      "status": "coverage_pending",
-      "reason": "Go tool-level source-flow analysis not yet supported (structural-only) - withheld to avoid an unearned grade"
     }
   ]
 }

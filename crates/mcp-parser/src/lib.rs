@@ -18,6 +18,7 @@ use fact_model::{
     sha256_prefixed, AttrValue, Entity, EntityKind, FactModel, Provenance, SourceDescriptor,
 };
 
+mod go;
 mod js;
 mod python;
 mod taint;
@@ -51,8 +52,19 @@ const NON_SHIPPED_DIRS: &[&str] = &[
     "testing", "testdata", "fixtures", "e2e", "docs", "doc",
 ];
 
-/// True if any path segment marks the file as non-shipped (see [`NON_SHIPPED_DIRS`]).
+/// True if the file is not part of the shipped server surface: a segment in [`NON_SHIPPED_DIRS`],
+/// OR a test file by strong naming convention (Go `*_test.go`, JS/TS `*.test.*` / `*.spec.*`).
+/// Test files that live outside a `tests/` dir (Go keeps them beside the code) otherwise leaked
+/// their bind/CORS setup into the shipped grade — e.g. grafana's `http_security_test.go`.
 fn is_non_shipped(path: &str) -> bool {
+    let b = basename(path);
+    if b.ends_with("_test.go")
+        || b.ends_with(".test.js") || b.ends_with(".test.ts")
+        || b.ends_with(".spec.js") || b.ends_with(".spec.ts")
+        || b.ends_with(".test.jsx") || b.ends_with(".test.tsx")
+    {
+        return true;
+    }
     path.split(['/', '\\']).any(|seg| NON_SHIPPED_DIRS.contains(&seg))
 }
 
@@ -397,6 +409,17 @@ fn collect_tools(files: &[RepoFile]) -> (Vec<ToolRec>, Option<(String, u32)>) {
         }
     }
 
+    // Go: per-file. Tool + request-arg-var taint for the two SDK idioms (see `go.rs`).
+    for f in files.iter().filter(|f| f.path.ends_with(".go") && !f.path.ends_with("_test.go")) {
+        let a = go::analyze(&f.content);
+        for t in a.tools {
+            if !t.name.is_empty() && seen.insert(t.name.clone()) {
+                let line = t.line;
+                out.push(ToolRec { name: t.name.clone(), path: f.path.clone(), line, taint: Some(t) });
+            }
+        }
+    }
+
     // JS/TS: per-file for now (repo-wide JS is a later slice).
     for f in files.iter().filter(|f| is_js_ts(&f.path)) {
         let a = js::analyze(&f.content);
@@ -668,8 +691,23 @@ struct Exposure {
 /// coarse — it matched a `bare_host == "0.0.0.0"` localhost check and a `0.0.0.0:3000` unit-test
 /// string in goose. Precision-first: we'd rather miss a context-less bind than flag a test string.
 /// (Surfacing `file:line` evidence is exactly what made those false locators visible.)
+/// A line whose code content is a comment — a comment *describing* a risk (a doc comment about a
+/// host allowlist, a note that a CORS wildcard is *suppressed*) is not the risk. Skipped by the
+/// structural exposure detectors so grafana's `// binds (0.0.0.0 ...)` allowlist doc and its
+/// `// ...Allow-Origin: * is suppressed` note don't produce false bind/CORS findings.
+fn is_comment_line(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("//") || t.starts_with('#') || t.starts_with('*') || t.starts_with("/*")
+}
+
 fn binds_all_line(line: &str) -> bool {
-    if !line.contains("0.0.0.0") {
+    if is_comment_line(line) || !line.contains("0.0.0.0") {
+        return false;
+    }
+    // `0.0.0.0/8` etc. is a CIDR range — an SSRF private-network *blocklist* entry (pydantic-ai's
+    // `ipaddress.IPv4Network('0.0.0.0/8')`), the opposite of a bind. A real bind is a bare address
+    // or `host:port`, never a CIDR. (The substring "addr" inside "ipaddress" is what let it match.)
+    if line.contains("0.0.0.0/") {
         return false;
     }
     let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
@@ -685,6 +723,9 @@ fn binds_all_line(line: &str) -> bool {
 }
 
 fn cors_wildcard_line(line: &str) -> bool {
+    if is_comment_line(line) {
+        return false;
+    }
     line.contains("allow_origins=[\"*\"]")
         || line.contains("origin: \"*\"")
         || line.contains("origin: '*'")
@@ -822,6 +863,13 @@ dependencies = [
         assert!(!binds_all_line("        || bare_host == \"0.0.0.0\""));
         assert!(!binds_all_line("assert_eq!(ensure_url_scheme(\"0.0.0.0:3000\"), x)"));
         assert!(!binds_all_line("a line with no address"));
+        // grafana regression: a DOC COMMENT about a host allowlist is not a bind, and a comment
+        // noting a CORS wildcard is *suppressed* is not a CORS wildcard.
+        assert!(!binds_all_line("// binds (0.0.0.0, ::, empty host) return all loopback variants"));
+        assert!(!cors_wildcard_line("\t// of Access-Control-Allow-Origin: * is suppressed."));
+        // pydantic-ai regression: an SSRF private-network blocklist CIDR is not a bind
+        // (the "addr" substring inside "ipaddress" is what matched before the CIDR guard).
+        assert!(!binds_all_line("    ipaddress.IPv4Network('0.0.0.0/8'),  # \"This\" network"));
     }
 
     #[test]

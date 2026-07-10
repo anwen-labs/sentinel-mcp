@@ -27,10 +27,17 @@ const SHELL: &[&str] = &[
     "subprocess.check_call(", "os.system(", "os.popen(", "Popen(", "commands.getoutput(",
     "eval(", "exec(",
 ];
+// Unambiguous HTTP calls: any tainted param reaching one is an outbound-fetch (SSRF) surface.
 const SSRF: &[&str] = &[
     "requests.get(", "requests.post(", "requests.put(", "requests.delete(", "requests.request(",
     "requests.head(", "httpx.get(", "httpx.post(", "httpx.request(", "httpx.stream(", "urlopen(",
-    "session.get(", "session.post(", "client.get(", "client.post(",
+];
+// Ambiguous `.get(`/`.post(` receivers — `client`/`session` is just as often a memcached/redis/DB
+// client or a dict (awslabs memcached `client.get(key)` is not SSRF). Require a URL-ish param so we
+// only flag an actual outbound URL, not a cache-key lookup.
+const AMBIG_HTTP: &[&str] = &[
+    "session.get(", "session.post(", "session.request(", "client.get(", "client.post(",
+    "client.request(",
 ];
 const FS: &[&str] = &[
     "open(", "Path(", "os.path.join(", ".read_text(", ".write_text(", "shutil.copy",
@@ -66,6 +73,8 @@ const URL_GUARD: &[&str] = &[
 const PATH_GUARD: &[&str] = &[
     "validate_relative_path", "is_relative_to", ".relative_to(", "commonpath", "commonprefix",
     "realpath", "secure_filename", "safe_join", "validate_path", "check_path", "\"..\"", "'..'",
+    "allowed_base_dir", "allowed_dir", "within_base", "is_within",
+    "validate_file_path", "validate_output_dir", "validate_file", "validate_output",
 ];
 
 /// Leading-space indentation width of a line.
@@ -452,9 +461,10 @@ pub fn analyze_repo(files: &[(&str, &str)]) -> Analysis {
             if any_marker(line, SSRF) {
                 t.ssrf = true;
             }
-            // Wrapped fetch: a URL-ish param passed into a fetch/convert/scrape helper (not a raw
-            // HTTP-lib call) — the markitdown `convert_uri(uri)` gap.
-            if any_marker(line, FETCH_WRAP)
+            // Ambiguous `client/session.get(` OR a wrapped fetch/convert helper: only SSRF when the
+            // tainted param is URL-ish (markitdown `convert_uri(uri)` gap; NOT memcached
+            // `client.get(key)`, a redis get, or a dict lookup).
+            if (any_marker(line, AMBIG_HTTP) || any_marker(line, FETCH_WRAP))
                 && t.params.iter().any(|p| is_urlish(p) && word_present(line, p))
             {
                 t.ssrf = true;
@@ -556,6 +566,24 @@ def il_search_case_law(query: str, court: str = None, limit: int = 20):
         let src = "@mcp.tool()\ndef fetch(url: str) -> str:\n    if not is_allowed_url(url):\n        raise ValueError()\n    return requests.get(url).text\n";
         let a = analyze(src);
         assert!(!a.tools[0].ssrf, "validated URL (allowlist) must suppress SSRF");
+    }
+
+    #[test]
+    fn client_get_on_non_url_param_is_not_ssrf() {
+        // awslabs memcached regression: client.get(key) on a memcached client is not SSRF —
+        // `client.get(` is ambiguous, so it needs a URL-ish param to flag.
+        let src = "@mcp.tool()\nasync def cache_get(key: str) -> str:\n    client = get_connection()\n    return client.get(key)\n";
+        assert!(!analyze(src).tools[0].ssrf, "client.get(key) on a cache key is not SSRF");
+        // but a URL-ish param into client.get IS a real outbound fetch
+        let real = "@mcp.tool()\nasync def proxy(url: str) -> str:\n    return client.get(url).text\n";
+        assert!(analyze(real).tools[0].ssrf, "client.get(url) with a URL param is SSRF");
+    }
+
+    #[test]
+    fn allowed_base_dir_suppresses_fs() {
+        // awslabs dynamodb regression: a tool that jails paths via allowed_base_dirs is not unscoped.
+        let src = "@mcp.tool()\ndef validate(schema_path: str) -> str:\n    f = Path(schema_path).resolve()\n    return generate(schema_path=str(f), allowed_base_dirs=[f.parent])\n";
+        assert!(!analyze(src).tools[0].fs, "allowed_base_dirs jail must suppress FS-unscoped");
     }
 
     #[test]

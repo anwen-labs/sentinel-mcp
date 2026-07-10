@@ -11,15 +11,16 @@ accusation of intent.
 ## Summary
 
 We scanned the top 35 MCP servers by install/download proxy. Of them,
-**26 could be statically graded at their pinned commit: 25 scored A and 1 scored B**
-(composite 94-100). The remaining 9 are withheld, each with a specific reason (below) -
-we do not publish a grade we cannot back with evidence.
+**28 could be statically graded at their pinned commit: 26 scored A and 2 scored B**
+(composite 84-100). The remaining 7 are withheld, each with a specific reason (below)
+- we do not publish a grade we cannot back with evidence.
 
-The single B is instructive. `microsoft/markitdown`'s `convert_to_markdown(uri)` tool
-fetches an arbitrary user-supplied URI in-process with no allowlist - the same SSRF that
-was publicly disclosed against it. Our open ruleset flags it deterministically, with a
-`file:line` pointer, and the High finding caps the grade at B. That is the point: an
-honest scorecard reproduces real issues AND declines to inflate the rest.
+The two B grades are instructive. `microsoft/markitdown`'s `convert_to_markdown(uri)` tool
+fetches an arbitrary user-supplied URI in-process with no allowlist - the same SSRF that was
+publicly disclosed against it. `awslabs/mcp` bundles DynamoDB tools that open a user-supplied
+filesystem path with no jail root. Both are flagged deterministically, each with a `file:line`
+pointer, and the High findings cap the grade at B. That is the point: an honest scorecard
+reproduces real issues AND declines to inflate the rest.
 
 The headline: contrary to alarmist framing that flags every popular MCP project as
 critical, the servers people actually install are, by and large, carefully built - and
@@ -43,7 +44,7 @@ reproducibly, is the whole value.
 
 ## Results
 
-25 servers scored A; 1 scored B (a High SSRF finding caps the grade). Full list:
+26 servers scored A; 2 scored B (an unresolved High finding caps each). Full list:
 
 | Server | Grade | Composite |
 |---|---|---|
@@ -51,45 +52,48 @@ reproducibly, is the whole value.
 | modelcontextprotocol/servers-archived | A | 100 |
 | mendableai/firecrawl-mcp-server | A | 100 |
 | GLips/Figma-Context-MCP | A | 100 |
+| supabase-community/supabase-mcp | A | 100 |
 | tavily-ai/tavily-mcp | A | 100 |
 | stripe/agent-toolkit | A | 100 |
+| pydantic/pydantic-ai | A | 100 |
+| apify/actors-mcp-server | A | 100 |
 | e2b-dev/mcp-server | A | 100 |
+| grafana/mcp-grafana | A | 100 |
 | cloudflare/mcp-server-cloudflare | A | 100 |
+| ppl-ai/modelcontextprotocol | A | 100 |
 | mongodb-js/mongodb-mcp-server | A | 99 |
 | Flux159/mcp-server-kubernetes | A | 99 |
 | redis/mcp-redis | A | 99 |
 | upstash/context7 | A | 98 |
 | modelcontextprotocol/servers | A | 98 |
 | getsentry/sentry-mcp | A | 98 |
-| supabase-community/supabase-mcp | A | 98 |
 | block/goose | A | 98 |
 | exa-labs/exa-mcp-server | A | 98 |
-| pydantic/pydantic-ai | A | 98 |
-| apify/actors-mcp-server | A | 98 |
 | 21st-dev/magic-mcp | A | 98 |
 | browserbase/mcp-server-browserbase | A | 98 |
-| awslabs/mcp | A | 98 |
-| ppl-ai/modelcontextprotocol | A | 97 |
 | sooperset/mcp-atlassian | A | 96 |
+| github/github-mcp-server | A | 95 |
 | chroma-core/chroma-mcp | A | 94 |
 | microsoft/markitdown | B | 94 |
+| awslabs/mcp | B | 84 |
 
 ## Ecosystem signals
 
-Across the 26 graded servers, the observable (mostly low-severity, context-modified)
+Across the 28 graded servers, the observable (mostly low-severity, context-modified)
 signals break down as:
 
 | Signal | Share of graded servers |
 |---|---|
-| CORS allows any origin (wildcard) | 30% (8/26) |
-| No committed dependency lockfile | 19% (5/26) |
-| Binds all network interfaces (0.0.0.0) | 15% (4/26) |
-| Binds all interfaces with no detected auth | 7% (2/26) |
-| Disables TLS certificate verification | 3% (1/26) |
-| Unbounded/unvalidated tool input | 3% (1/26) |
-| SSRF (fetches a user-controlled URL, no allowlist) | 3% (1/26) |
+| CORS allows any origin (wildcard) | 25% (7/28) |
+| No committed dependency lockfile | 17% (5/28) |
+| Binds all network interfaces (0.0.0.0) | 10% (3/28) |
+| Unbounded/unvalidated tool input | 7% (2/28) |
+| Binds all interfaces with no detected auth | 3% (1/28) |
+| Disables TLS certificate verification | 3% (1/28) |
+| SSRF (fetches a user-controlled URL, no allowlist) | 3% (1/28) |
+| MCP-FILESYSTEM-UNSCOPED | 3% (1/28) |
 
-No graded server had a Critical finding, and only 1 had a High (microsoft/markitdown). The rest are hygiene items (a wildcard CORS
+No graded server had a Critical finding, and only 2 had a High finding (awslabs/mcp, microsoft/markitdown). The rest are hygiene items (a wildcard CORS
 default, a missing lockfile) rather than exploitable vulnerabilities.
 
 ## What we do not grade (and why)
@@ -102,12 +106,10 @@ the pinned commit. These 7 are not scored:
 | microsoft/playwright-mcp | tool implementation ships in the playwright-core dependency (repo index.js is a shim) - not present at the pinned commit |
 | makenotion/notion-mcp-server | tools are generated at runtime from an OpenAPI spec, not defined in source |
 | wonderwhy-er/DesktopCommanderMCP | high-privilege local agent (terminal command execution) - grading calibration in progress |
-| github/github-mcp-server | Go tool-level source-flow analysis not yet supported (structural-only) - withheld to avoid an unearned grade |
 | oraios/serena | high-privilege local coding agent (shell + filesystem tools) - grading calibration in progress |
 | executeautomation/mcp-playwright | high-privilege local agent (drives a local browser to arbitrary URLs / runs page JS) - grading calibration in progress |
 | googleapis/genai-toolbox | tools are defined in user-supplied YAML config, not in source |
 | microsoft/mcp | no analyzable MCP tool source at the pinned commit (docs/CLI repo, no source in a supported language) |
-| grafana/mcp-grafana | Go tool-level source-flow analysis not yet supported (structural-only) - withheld to avoid an unearned grade |
 
 ## Reproduce it
 
@@ -121,9 +123,10 @@ and you will get the same grade and the same evidence pointers.
   deployment properties (e.g. whether a given instance is exposed unauthenticated) are
   out of scope here.
 - Denial-of-service and SQL-injection are covered coarsely/syntactically in v0.1.
-- Source-flow taint is same-file in v0.1; cross-file / inter-procedural analysis and a
-  path-jail guard are planned. Go tool-level taint and servers whose tools are
-  generated at runtime (OpenAPI/YAML) or shipped in a dependency are withheld until
+- Source-flow taint is same-file in v0.1; cross-file / inter-procedural analysis is planned.
+  Python, JavaScript/TypeScript and Go tool-level taint run today (Go covers both the
+  `mcp.Tool{}`/`RequiredParam` and `MustTool`/typed-args idioms). Servers whose tools are
+  generated at runtime (OpenAPI/YAML) or shipped in a dependency remain withheld until
   supported - see the withheld list above.
 
 Ruleset: pack-mcp-core@0.1.0.
