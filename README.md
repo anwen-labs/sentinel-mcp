@@ -103,6 +103,9 @@ Go tool-level taint, and class/registry tool shapes are on the roadmap (see the 
 - [`SECURITY.md`](SECURITY.md) — how to report an issue in the scanner, and our disclosure policy for
   findings about other projects (including maintainers' right of reply).
 
+If the scorecard is useful, a star helps other people find it — though, as the data here shows,
+don't read anything about security into one.
+
 ## License
 MIT — see [`LICENSE`](LICENSE).
 
